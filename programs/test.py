@@ -1,26 +1,28 @@
 import system.Logger
 from system.Program import Program
-import time
+import time, machine
 import random
 import system.PTRS
 import Events
+import Single
+import axp202_constants
 
 class test(Program):
     def __init__(self, id = None, draw = False):
         super().__init__(id, True)
 
+    def button_pressed(self):
+        Single.Hardware.lightsleep(10000)
+
     def start(self):
-        self.button = system.PTRS.Button(0.25,0.25,0.5,0.5,lambda: print("button callback"), "Test")
+        self.button = system.PTRS.Button(0.25,0.25,0.5,0.5, self.button_pressed,"Test")
         super().start()
 
     def think(self):
         try:
             while True: #event treatment
                 event = self.input.popleft()
-                if isinstance(event, Events.StopEvent):
-                    self._do_stop()
-                else:
-                    self.button.event(event)
+                self.button.event(event)
         except IndexError:
             pass
         #if __debug__:
@@ -36,6 +38,6 @@ class test(Program):
 
     @micropython.native
     def draw(self, buff):
-        #for a in range(10):
-        #    buff.line(random.randint(0,1000) / 1000.0,random.randint(0,1000) / 1000.0,random.randint(0,1000) / 1000.0,random.randint(0,1000) / 1000.0,0xffff)
+        for a in range(10):
+            buff.line(random.randint(0,1000) / 1000.0,random.randint(0,1000) / 1000.0,random.randint(0,1000) / 1000.0,random.randint(0,1000) / 1000.0,0xffff)
         self.button.draw(buff)

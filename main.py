@@ -10,11 +10,17 @@ def set_global_exception():
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(handle_exception)
 
+import machine, time
+
+vibe = machine.Pin(4, machine.Pin.OUT)
+vibe.on()
+time.sleep_ms(50)
+vibe.off()
 
 set_global_exception()  # Debug aid
 Single.Kernel = Kernel()  # Constructor might create tasks
 import _thread
-_thread.start_new_thread(Single.Kernel.kernel_main_thread, ()) #did anyone say 'free the REPL' ?
+_thread.start_new_thread(Single.Kernel.kernel_main_thread, ()) #did anyone say 'free the REPL' ? we love the repl!
 #my_class.run_forever()  # Non-terminating method
 #my_class.kernel_main_thread()
 

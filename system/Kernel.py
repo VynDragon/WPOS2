@@ -20,7 +20,6 @@ from collections import deque #in deque append and popleft are ATOMIC (thread sa
 # Thread 2+: Apps thinking
 
 
-# REMBER ACCESSING HARDWARE LIKE I2C OR SPI OUT OF THREAD 1 WILL CRASH THE ESP
 # doc says micropython.schedule is actually thread safe
 
 
@@ -54,6 +53,8 @@ class Kernel:
                     print("processing ", this_event)
                 if isinstance(this_event, Events.RunEvent):
                     self.runProgram(this_event.name)
+                elif isinstance(this_event, Events.StopEvent):
+                    self.stopProgram(this_event.name)
                 else:
                     self.running_lock.acquire()
                     for program in self.running:
@@ -98,6 +99,24 @@ class Kernel:
             print("program", program_instance.id, "is dead reason: ", e)
             import sys
             sys.print_exception(e)
+
+    def stopProgram(self, id = None):
+        if id == None:
+            self.running_lock.acquire()
+            if len(self.running) > 0:
+                self.running[-1]._do_stop()
+                self.running.pop()
+            self.running_lock.release()
+            return
+        self.running_lock.acquire()
+        to_stop = [i for i in self.running if i.id == id]
+        self.running = [i for i in self.running if i.id != id]
+        for prog in to_stop:
+            prog._do_stop()
+        self.running_lock.release()
+
+
+
 
     def __init__(self):
         self._lock = _thread.allocate_lock() # lock for IRQ
@@ -158,6 +177,7 @@ class Kernel:
             if not self._lock.acquire():
                 Logger.log("Couldnt lock Kernel lock, probably a major issue")
             self.hardware = Hardware.Hardware()
+            Single.Hardware = self.hardware
             self.framebuffer_array = bytearray(240 * 240 * 2) # 2 byte per pixel
             #Kernel.framebuffer = oframebuf.OFrameBuffer(Kernel.framebuffer_array, 240, 240, framebuf.RGB565)
             #Kernel.framebuffer = framebuf.FrameBuffer(Kernel.framebuffer_array, 240, 240, framebuf.RGB565)
@@ -166,6 +186,7 @@ class Kernel:
             # seems to be about how fast the SPI interface can keep up while hitting few cant keep up
             _thread.start_new_thread(self.render_thread, ())
             self._lock.release()
+            machine.freq(80000000) # we have done most of the init we can chill
             self.event(Events.RunEvent("test"))
             while(True):
                 self._lock.acquire()
@@ -174,11 +195,16 @@ class Kernel:
                 self.hardware.process()
                 self._lock.release()
                 time.sleep_ms(100)
-                #machine.lightsleep()
+
         except Exception as e:
+            Single.fucky_wucky = True
             print("Kernel thread is dead, reason: ", e)
-            import sys
-            sys.print_exception(e)
+            from sys import print_exception
+            print_exception(e)
+            self.hardware.fucky_wucky(e)
+            time.sleep_ms(5000)
+        finally:
+            machine.reset()
 
     ''''@micropython.native
     def render_callback(self, timer):
@@ -193,7 +219,7 @@ class Kernel:
 
     @micropython.native
     def render_thread(self):
-        while(True):
+        while(not Single.fucky_wucky):
             startrender = time.ticks_ms()
             self.render()
             if not self.max_refresh:
@@ -206,6 +232,8 @@ class Kernel:
         self.render_tick = time.ticks_ms()
         self.blit_tick = time.ticks_ms()
         self.hardware.display.blit_buffer(self.framebuffer_array, 0, 0, 240, 240) # O(1) for the whole render pipeline with that, but quite slow... but not much more than even a simple direct draw
+        # seems like to get more speed would need to do quite a lot on the C side of things
+
         '''if __debug__:
             ft = time.ticks_ms() - self.blit_tick
             print("took", ft, "ms to blit,", 1000/ft, "fps")'''

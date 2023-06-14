@@ -39,8 +39,6 @@ class Program:
         try:
             while True:
                 event = self.input.popleft()
-                if event is Events.StopEvent:
-                    self._do_stop()
         except IndexError:
             pass
         time.sleep_ms(1000)
