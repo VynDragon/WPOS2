@@ -72,33 +72,40 @@ class Kernel:
         _thread.start_new_thread(self.runProgram2, (name,))
 
 
-    def runProgram2(self, name):
+    def runProgram2(self, name): # todo: give on_device method to see why a program failed to start
         if __debug__:
             print("in runProgram2 for ", name, " with path ", sys.path, " in ", os.getcwd())
             #micropython.mem_info(1)
         self.running_lock.acquire()
-        program = __import__("programs." + name, globals(), locals(), [], 0)
-        pinstance = getattr(program, name)(_thread.get_ident(), True)
-        if __debug__:
-            print("Free Ram status before gc", free(True))
-            gc.collect()
-            print("Free Ram after gc collect", free(True))
-            print("program: ", pinstance)
-        self.running.append(pinstance)
-        if __debug__:
-            print("started ", pinstance)
-        self.running_lock.release()
-        self.runningProgram(pinstance)
+        try:
+            program = __import__("programs." + name, globals(), locals(), [], 0)
+            pinstance = getattr(program, name)(_thread.get_ident(), True)
+            if __debug__:
+                print("Free Ram status before gc", free(True))
+                gc.collect()
+                print("Free Ram after gc collect", free(True))
+                print("program: ", name)
+            self.running.append(pinstance)
+            self.running_lock.release()
+            if __debug__:
+                print("started ", pinstance)
+            self.runningProgram(pinstance)
+        except Exception as e:
+            print("program", name, "couldnt load, reason: ", e)
+            sys.print_exception(e)
+        if self.running_lock.locked(): # there is good reason for that
+            self.running_lock.release()
 
     def runningProgram(self, program_instance):
         try:
-            program_instance.start()
-            while (program_instance):
+            program_instance._do_start()
+            while (not program_instance.should_exit):
                 program_instance._do_think()
         except Exception as e:
             print("program", program_instance.id, "is dead reason: ", e)
-            import sys
             sys.print_exception(e)
+            self.stopProgram(program_instance.id)
+
 
     def stopProgram(self, id = None):
         if id == None:
@@ -111,10 +118,9 @@ class Kernel:
         self.running_lock.acquire()
         to_stop = [i for i in self.running if i.id == id]
         self.running = [i for i in self.running if i.id != id]
-        for prog in to_stop:
-            prog._do_stop()
         self.running_lock.release()
-
+        for prog in to_stop:
+            prog._do_stop() # when called from itself, the thread kills itself in there, and if that doesnt happen somehow it will die when returning anyway.
 
 
 
@@ -194,7 +200,7 @@ class Kernel:
                 self.process_events()
                 self.hardware.process()
                 self._lock.release()
-                time.sleep_ms(100)
+                time.sleep_ms(70)
 
         except Exception as e:
             Single.fucky_wucky = True
@@ -229,19 +235,22 @@ class Kernel:
 
     @micropython.native
     def render(self):
-        self.render_tick = time.ticks_ms()
-        self.blit_tick = time.ticks_ms()
-        self.hardware.display.blit_buffer(self.framebuffer_array, 0, 0, 240, 240) # O(1) for the whole render pipeline with that, but quite slow... but not much more than even a simple direct draw
+        #self.render_tick = time.ticks_ms()
+        #self.blit_tick = time.ticks_ms()
+        # the slow bit:
+        Single.Hardware.display.blit_buffer(self.framebuffer_array, 0, 0, Hardware.Hardware.DISPLAY_WIDTH, Hardware.Hardware.DISPLAY_HEIGHT) # O(1) for the whole render pipeline with that, but quite slow... but not much more than even a simple direct draw
         # seems like to get more speed would need to do quite a lot on the C side of things
 
         '''if __debug__:
             ft = time.ticks_ms() - self.blit_tick
             print("took", ft, "ms to blit,", 1000/ft, "fps")'''
+        app = None
         self.running_lock.acquire()
         if len(self.running) > 0:
-            self.running[-1]._do_draw(self.framebuffer)
+            app = self.running[-1]
         self.running_lock.release()
-        self.is_rendering = False
+        if app:
+            app._do_draw(self.framebuffer)
         '''if __debug__:
             ft = time.ticks_ms() - self.render_tick
             print("took", ft, "ms to render,", 1000/ft, "fps")'''

@@ -11,11 +11,13 @@ import Events
 import esp, esp32
 import Single
 
-DISPLAY_WIDTH = 240
-DISPLAY_HEIGHT = 240
 
 class Hardware:
     Vc3V3 = 2700
+    #Vc3V3 = 3300
+    DISPLAY_WIDTH = 240
+    DISPLAY_HEIGHT = 240
+    RELEASE_TWITCHYNESS = 100
     def __init__(self):
         self.hardware = []
         Logger.log("Initializing Hardware...")
@@ -53,7 +55,7 @@ class Hardware:
         display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, limit is 80Mhz
         cs = machine.Pin(5, machine.Pin.OUT)
         dc = machine.Pin(27, machine.Pin.OUT)
-        self.display = st7789.ST7789(display_spi, DISPLAY_WIDTH, DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=DISPLAY_WIDTH*DISPLAY_HEIGHT*2,)
+        self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
         self.display.init()
         self.display.on()
         self.display.fill(st7789.BLACK)
@@ -78,12 +80,14 @@ class Hardware:
         self.irq_touch_buffer_pos2 = bytearray(4)
         self.irq_touch_present = False
         self.irq_touch_time = 0
-        self.irq_touch_fired_release = False
+        self.irq_touch_fired_release = True
 
         #self.oldfb = bytearray(DISPLAY_WIDTH * DISPLAY_HEIGHT * 2)
 
         self.wifi_lock = _thread.allocate_lock()
         self.wifi = None
+
+        self.vibrator = machine.Pin(4, machine.Pin.OUT)
 
     def lightsleep(self, time_ms, force = False):
         if self.wifi_lock.locked() and not force:
@@ -106,11 +110,23 @@ class Hardware:
         self.display.on()
         return True
 
+    def feedback1(self):
+        self.vibrator.on()
+        machine.Timer(3, mode=machine.Timer.ONE_SHOT, period=20, callback=self.feedback_frame)
+
+    def feedback2(self):
+        self.vibrator.on()
+        machine.Timer(3, mode=machine.Timer.ONE_SHOT, period=50, callback=self.feedback_frame)
+
+    def feedback_frame(self, _):
+        self.vibrator.off()
+
     def process(self):
-        if not self.irq_touch_present and self.irq_touch_time + 200 < time.ticks_ms() and not self.irq_touch_fired_release:
+        if not self.irq_touch_present and self.irq_touch_time + self.RELEASE_TWITCHYNESS < time.ticks_ms() and not self.irq_touch_fired_release:
             x = (self.irq_touch_buffer_pos1[0] << 8 | self.irq_touch_buffer_pos1[1]) & 0x0FFF
             y = (self.irq_touch_buffer_pos1[2] << 8 | self.irq_touch_buffer_pos1[3]) & 0x0FFF
-            Single.Kernel.event(Events.ReleaseEvent(float(x) / float(DISPLAY_WIDTH), float(y) / float(DISPLAY_HEIGHT)))
+            Single.Kernel.event(Events.ReleaseEvent(float(x) / float(Hardware.DISPLAY_WIDTH), float(y) / float(Hardware.DISPLAY_HEIGHT)))
+            self.feedback1()
             self.irq_touch_fired_release = True
 
     def irq_touch(self, pin):
@@ -130,7 +146,7 @@ class Hardware:
         self.irq_touch_present = False
         x = (self.irq_touch_buffer_pos1[0] << 8 | self.irq_touch_buffer_pos1[1]) & 0x0FFF
         y = (self.irq_touch_buffer_pos1[2] << 8 | self.irq_touch_buffer_pos1[3]) & 0x0FFF
-        Single.Kernel.event(Events.TouchEvent(float(x) / float(DISPLAY_WIDTH), float(y) / float(DISPLAY_HEIGHT)))
+        Single.Kernel.event(Events.TouchEvent(float(x) / float(Hardware.DISPLAY_WIDTH), float(y) / float(Hardware.DISPLAY_HEIGHT)))
 
     def fucky_wucky(self, e): # try to print exception to display
         from TextMode import TextMode_st7789

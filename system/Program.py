@@ -10,6 +10,8 @@ class Program:
         self._draw = draw
         self.ready = False
         self.input = deque((), 5)
+        self.should_exit = False
+        self.thread = _thread.get_ident()
         if id == None:
             self.id = _thread.get_ident()
         else:
@@ -30,7 +32,9 @@ class Program:
 
     def _do_stop(self):
         self.stop()
-        _thread.exit()
+        if _thread.get_ident() == self.thread:
+            _thread.exit()
+        self.should_exit = True
 
     def event(self, event): #fast event handling from kernel thread, least amount of code possible in there please
         self.input.append(event)
@@ -46,8 +50,12 @@ class Program:
     def draw(self, WPFramebuffer):
         pass
 
-    def start(self):
+    def _do_start(self):
+        self.start()
         self.ready = True
+
+    def start(self):
+        pass
 
     def stop(self):
         pass

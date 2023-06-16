@@ -72,6 +72,6 @@ class WPFrameBuffer(framebuf.FrameBuffer):
         super().text(s, int(x * self.width), int(y * self.height), c)
 
     def blit(self, fbuf, x, y, key=-1, palette = None):
-        self.update_max(x, y)
-        self.update_max(x + fbuf.width, y  + fbuf.height)
+        #self.update_max(x, y)
+        #self.update_max(x + fbuf.width, y  + fbuf.height)
         super().blit(fbuf, int(x * self.width), int(y * self.height), key, palette)

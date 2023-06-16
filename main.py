@@ -16,6 +16,7 @@ vibe = machine.Pin(4, machine.Pin.OUT)
 vibe.on()
 time.sleep_ms(50)
 vibe.off()
+vibe = None
 
 set_global_exception()  # Debug aid
 Single.Kernel = Kernel()  # Constructor might create tasks
