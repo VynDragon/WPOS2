@@ -29,7 +29,7 @@ class Hardware:
         self.pmu.setLDO2Voltage(2800) #default backlight level
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         '''very low 3.3v rail to minimize power consumption,
-        esp can go down to 2.3v and that's the highest necessary voltage (and might be fine down to 1.8v too)
+        esp can go down to 2.3v (and might be fine down to 1.8v too)
         mpu/bma : 1.6v, typic:1.8v
         pmu:2.9v (but we dont care, this is the powersupply, this is how low the battery can go)
         display: 1.6v
@@ -37,7 +37,7 @@ class Hardware:
         rtc: 1v (wow)
         speaker: 2.5v (we might need to turn voltage back up when we use it, but it's mostly a amp so it might be fine)
         mic: 1.6v
-        psram: 2.7v
+        psram: 2.7v :(
         '''
         self.pmu.disablePower(axp202_constants.AXP202_LDO3)
         self.pmu.disablePower(axp202_constants.AXP202_LDO4)

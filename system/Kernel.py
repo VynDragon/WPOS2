@@ -57,11 +57,14 @@ class Kernel:
                     self.stopProgram(this_event.name)
                 else:
                     self.running_lock.acquire()
-                    for program in self.running:
-                        if program.id == this_event.t_program_id:
-                            program.event(this_event)
-                        elif this_event.t_program_id == None:
-                            program.event(this_event)
+                    if isinstance(this_event, Events.FrontEvent) and this_event.t_program_id == None:
+                        self.running[-1].event(this_event)
+                    else:
+                        for program in self.running:
+                            if program.id == this_event.t_program_id:
+                                program.event(this_event)
+                            elif this_event.t_program_id == None:
+                                program.event(this_event)
                     self.running_lock.release()
         except IndexError as e:
             pass

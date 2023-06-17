@@ -3,6 +3,9 @@ class Event:
         self.t_program_id = t
         self.s_program_id = s
 
+class FrontEvent(Event):
+    def __init__(self, t = None, s = None):
+        super().__init__(t, s)
 
 class RunEvent(Event):
     def __init__(self, programname, t = None, s = None):
@@ -14,13 +17,13 @@ class StopEvent(Event):
         self.name = programname
         super().__init__(t, s)
 
-class TouchEvent(Event):
+class TouchEvent(FrontEvent):
     def __init__(self, x, y, t = None, s = None):
         self.x = x
         self.y = y
         super().__init__(t, s)
 
-class ReleaseEvent(Event):
+class ReleaseEvent(FrontEvent):
     def __init__(self, x, y, t = None, s = None):
         self.x = x
         self.y = y
