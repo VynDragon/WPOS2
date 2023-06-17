@@ -14,11 +14,8 @@ class test(Program):
         self.started = False
 
     def button_pressed(self):
-        #Single.Hardware.lightsleep(10000)
-        #self.clear = True
-        if not self.started:
-            Single.Kernel.event(Events.RunEvent("keyboard"))
-            self.started = True
+        Single.Hardware.lightsleep(5000)
+        self.clear = True
 
     def slider_callback(self):
         Single.Hardware.pmu.setLDO2Voltage(self.slider.value * 900 + 2400)
@@ -28,6 +25,7 @@ class test(Program):
         self.button = system.PTRS.Button(0.0,0.0,0.5,0.5, self.button_pressed,"Test")
         self.slider = system.PTRS.Slider(0.1,0.75,0.8,0.20, 0.5, self.slider_callback,"Test")
         self.switch = system.PTRS.Switch(0.5,0.0,0.5,0.5, False, self.button_pressed,"Test")
+        self.textfield = system.PTRS.TextField(0.0,0.55,1.0,0.15)
 
     def think(self):
         try:
@@ -36,6 +34,7 @@ class test(Program):
                 self.button.event(event)
                 self.slider.event(event)
                 self.switch.event(event)
+                self.textfield.event(event)
         except IndexError:
             pass
         #if __debug__:
@@ -47,6 +46,7 @@ class test(Program):
             self.button.event(event)
             self.slider.event(event)
             self.switch.event(event)
+            self.textfield.event(event)
         else:
             super().event(event)
 
@@ -61,3 +61,4 @@ class test(Program):
         self.button.draw(buff)
         self.slider.draw(buff)
         self.switch.draw(buff)
+        self.textfield.draw(buff)

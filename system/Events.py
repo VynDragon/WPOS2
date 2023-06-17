@@ -40,8 +40,13 @@ class SliderEvent(Event):
         self.slider = slider
         super().__init__(t, s)
 
-class TextInputEvent(Event):
+class TextInputEvent(FrontEvent):
     def __init__(self, text, t = None, s = None):
         self.text = text
+        super().__init__(t, s)
+
+class TextFieldEvent(Event): #Textfield update
+    def __init__(self, field, t = None, s = None):
+        self.field = field
         super().__init__(t, s)
 

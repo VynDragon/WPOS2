@@ -12,7 +12,8 @@ class WPFrameBuffer(framebuf.FrameBuffer):
         else:
             super().__init__(buffer, width, height, format, stride)
         self.width = width
-        self.height = height
+        self.height = height # and then we accidentaly had support for writer
+        # maybe we should've used nano-gui
         self.maxX = None
         self.maxY = None
         self.minX = None

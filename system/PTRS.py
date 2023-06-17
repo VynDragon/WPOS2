@@ -5,7 +5,7 @@ import Events
 import Single
 
 class Button:
-    TOUCH_LAST = 5 # 10 frames
+    TOUCH_LAST = 5 # 5 frames
 
     def __init__(self, x, y, w, h, callback = None, name = ""):
         self.x = x
@@ -134,4 +134,35 @@ class Switch:
             tx = self.x + 0.05
             ty = self.y + self.h / 2.0
             buff.text(self.name, tx, ty, Single.DEFAULT_TEXT_COLOR)
+
+class TextField:
+    def __init__(self, x, y, w, h, value = "", hide_contents = False, callback = None, name = ""):
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.name = name
+        self.value = value
+        self.callback = callback
+        self.hide_contents = hide_contents
+        if callback == None:
+            self.callback = self.default_callback
+
+    def default_callback(self):
+        Single.Kernel.event(TextFieldEvent(self))
+
+    @micropython.native
+    def event(self, event):
+        if isinstance(event, Events.ReleaseEvent):
+            if event.x > self.x and event.x < self.x + self.w and event.y > self.y and event.y < self.y + self.h:
+                Single.Kernel.event(Events.RunEvent("keyboard"))
+        elif isinstance(event, Events.TextInputEvent):
+            self.value = event.text
+            Single.Kernel.event(Events.TextFieldEvent(self))
+
+    @micropython.native
+    def draw(self, buff):
+        buff.rect(self.x, self.y, self.w, self.h, Single.DEFAULT_OUTLINE_COLOR, False)
+        buff.text(self.value, self.x, self.y + self.h / 2.0 - Single.DEFAULT_TEXT_RATIO_INV, Single.DEFAULT_TEXT_COLOR)
+
 
