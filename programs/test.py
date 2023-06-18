@@ -8,7 +8,7 @@ import Single
 import axp202_constants
 
 class test(Program):
-    def __init__(self, id = None, draw = False):
+    def __init__(self, id = None, draw = False, arg = None):
         super().__init__(id, True)
         self.clear = False
         self.started = False

@@ -28,10 +28,12 @@ class keyboard(Program):
     KB_HEIGHT = 0.8
     KB_WIDTH = 1.0
 
-    def __init__(self, id = None, draw = False):
+    def __init__(self, id = None, draw = False, arg = None):
         super().__init__(id, True)
         self.mode = 0
         self.text = ""
+        if arg != None:
+            self.text = arg
         self.backing = [None, None, None]
 
         self.startx = 0.0

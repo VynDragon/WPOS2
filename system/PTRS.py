@@ -47,7 +47,7 @@ class Button:
         textlen = float(len(self.name))
         if textlen > 0.0:
             tx = self.x + self.w / 2.0 - (1.0/Single.DEFAULT_TEXT_RATIO * textlen / 2.0)
-            ty = self.y + self.h / 2.0
+            ty = self.y + self.h / 2.0 - Single.DEFAULT_TEXT_RATIO_INV_2
             buff.text(self.name, tx, ty, Single.DEFAULT_TEXT_COLOR)
 
 class Slider:
@@ -155,14 +155,18 @@ class TextField:
     def event(self, event):
         if isinstance(event, Events.ReleaseEvent):
             if event.x > self.x and event.x < self.x + self.w and event.y > self.y and event.y < self.y + self.h:
-                Single.Kernel.event(Events.RunEvent("keyboard"))
+                Single.Kernel.event(Events.RunEvent("keyboard", self.value))
         elif isinstance(event, Events.TextInputEvent):
             self.value = event.text
-            Single.Kernel.event(Events.TextFieldEvent(self))
+            self.callback()
 
     @micropython.native
     def draw(self, buff):
         buff.rect(self.x, self.y, self.w, self.h, Single.DEFAULT_OUTLINE_COLOR, False)
-        buff.text(self.value, self.x, self.y + self.h / 2.0 - Single.DEFAULT_TEXT_RATIO_INV, Single.DEFAULT_TEXT_COLOR)
+        if self.hide_contents:
+            fstr = "*" * len(self.value)
+            buff.text(fstr, self.x, self.y + self.h / 2.0 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_TEXT_COLOR)
+        else:
+            buff.text(self.value, self.x, self.y + self.h / 2.0 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_TEXT_COLOR)
 
 

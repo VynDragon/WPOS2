@@ -11,5 +11,21 @@
   - MicroPython Human Interface Device library
   - png 'Pure Python PNG Reader/Writer'
   - itertools.py (required by png)
-- Compiling with T-Watch board folder for MPY from this repository (not necessary, but let you use the full esp's flash and sets options that might do something)
+- Compiling with T-Watch board folder for MPY from this repository (not strictly necessary, but let you use the full esp's flash and sets options that might do something)
 
+## Installing:
+- Go to micropython folder from this repository and follow instructions
+- Copy ALL the .py (and ONLY the .py, there is only python files that go in the watch for now) files from this repository to the watch, keeping the folders (CopyToWatch.sh might do it all for you)
+- devices.json is optional, look into Hardware.py for why (but might come handy to you)
+
+## Modifying for other platforms
+For other esp32 platforms, all the code that is platform-specific should be in Hardware.py (make yourself a new Hardware.py), with the exception of the blit command in render thread in Kernel.py (FOR NOW)
+For a different MCU, it should be mostly the same with more exceptions (stuffs like timers may not match, amount of ram, random platform-specific functions i forgot in the code...)
+
+
+## Notes
+Dont expect fast display on anything but T-WATCH S3, the 2020 watches uses the wrong MOSI pin.
+
+I've also capped the FPS to 10 by default, there is a way to uncap it from applications (but be aware that blitting the full screen takes at minimum about 40ms on T-WATCH 2020 V1)
+
+T-Watch 2020 V1 uses about 3ma in light sleep with current code

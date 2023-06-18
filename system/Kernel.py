@@ -5,6 +5,7 @@
 
 import Single
 import Hardware
+import Settings
 import Events
 import Program
 import uasyncio
@@ -13,7 +14,7 @@ import Logger
 import oframebuf, framebuf
 import random, sys, os, gc
 import _thread, time, micropython
-from collections import deque #in deque append and popleft are ATOMIC (thread safe! This is of utmost importance.) Use try except for handling empty (IndexError)
+from collections import deque #in deque append and popleft are ATOMIC (thread safe! This is of utmost importance and the base of the event system) Use try except for handling empty (IndexError)
 
 # Thread 0: Kernel
 # Thread 1: Render
@@ -52,7 +53,7 @@ class Kernel:
                 if __debug__:
                     print("processing ", this_event)
                 if isinstance(this_event, Events.RunEvent):
-                    self.runProgram(this_event.name)
+                    self.runProgram(this_event.name, this_event.arg)
                 elif isinstance(this_event, Events.StopEvent):
                     self.stopProgram(this_event.name)
                 else:
@@ -69,20 +70,21 @@ class Kernel:
         except IndexError as e:
             pass
 
-    def runProgram(self, name):
+    def runProgram(self, name, arg):
         if __debug__:
             print("in runProgram for ", name)
-        _thread.start_new_thread(self.runProgram2, (name,))
+        self.loading_program = True
+        _thread.start_new_thread(self.runProgram2, (name, arg))
 
 
-    def runProgram2(self, name): # todo: give on_device method to see why a program failed to start
+    def runProgram2(self, name, arg): # todo: give on device method to see why a program failed to start
         if __debug__:
             print("in runProgram2 for ", name, " with path ", sys.path, " in ", os.getcwd())
             #micropython.mem_info(1)
         self.running_lock.acquire()
         try:
             program = __import__("programs." + name, globals(), locals(), [], 0)
-            pinstance = getattr(program, name)(_thread.get_ident(), True)
+            pinstance = getattr(program, name)(_thread.get_ident(), True, arg)
             if __debug__:
                 print("Free Ram status before gc", free(True))
                 gc.collect()
@@ -96,18 +98,21 @@ class Kernel:
         except Exception as e:
             print("program", name, "couldnt load, reason: ", e)
             sys.print_exception(e)
+        self.loading_program = False
         if self.running_lock.locked(): # there is good reason for that
             self.running_lock.release()
 
     def runningProgram(self, program_instance):
         try:
             program_instance._do_start()
+            self.loading_program = False
             while (not program_instance.should_exit):
                 program_instance._do_think()
         except Exception as e:
             print("program", program_instance.id, "is dead reason: ", e)
             sys.print_exception(e)
             self.stopProgram(program_instance.id)
+        self.loading_program = False
 
 
     def stopProgram(self, id = None):
@@ -139,36 +144,13 @@ class Kernel:
         self.framebuffer = None
         self.framebuffer_array = None
         self.is_rendering = False
+        self.loading_program = True
         self.kernel_thread = None
         self.input = deque((), 100)
         self.running = []
         self.running_lock = _thread.allocate_lock()
 
-    '''def run_forever(self): # thread 0
-        try:
-            Logger.addOutput(print)
-            Logger.log("Welcome to WPOS2")
-            _thread.stack_size(64*1024)
-            Logger.log("Thread stack size is: " + str(_thread.stack_size()))
-            Logger.log("Thread " + str(_thread.get_ident()) + " is starting Kernel Thread")
-            Logger.process()
-            _thread.start_new_thread(Kernel.kernel_main_thread, (self,))
 
-            pin38 = machine.Pin(38, machine.Pin.IN) #irq touch
-            pin37 = machine.Pin(37, machine.Pin.IN) #irq external rtc
-            pin39 = machine.Pin(39, machine.Pin.IN) #irq IMU
-            pin35 = machine.Pin(35, machine.Pin.IN) #irq axp202
-            esp32.wake_on_ext0((pin35), esp32.WAKEUP_ANY_HIGH)
-
-            while(True):
-                Logger.process()
-                #wdt.feed()
-                time.sleep_ms(100)
-                #await uasyncio.sleep_ms(1000)
-        except Exception as e:
-            print("IRQ thread is dead, reason: ", e)
-            import sys
-            sys.print_exception(e)'''
 
     @micropython.native
     def kernel_main_thread(self): # thread 0
@@ -187,6 +169,8 @@ class Kernel:
                 Logger.log("Couldnt lock Kernel lock, probably a major issue")
             self.hardware = Hardware.Hardware()
             Single.Hardware = self.hardware
+            self.settings = Settings.Settings()
+            Single.Settings = self.settings
             self.framebuffer_array = bytearray(240 * 240 * 2) # 2 byte per pixel
             #Kernel.framebuffer = oframebuf.OFrameBuffer(Kernel.framebuffer_array, 240, 240, framebuf.RGB565)
             #Kernel.framebuffer = framebuf.FrameBuffer(Kernel.framebuffer_array, 240, 240, framebuf.RGB565)
@@ -196,7 +180,7 @@ class Kernel:
             _thread.start_new_thread(self.render_thread, ())
             self._lock.release()
             machine.freq(80000000) # we have done most of the init we can chill
-            self.event(Events.RunEvent("test"))
+            self.event(Events.RunEvent("wifi_settings"))
             while(True):
                 self._lock.acquire()
                 Logger.process()
@@ -230,7 +214,10 @@ class Kernel:
     def render_thread(self):
         while(not Single.fucky_wucky):
             startrender = time.ticks_ms()
-            self.render()
+            if self.loading_program:
+                self.render_loading_program()
+            else:
+                self.render()
             if not self.max_refresh:
                 while(time.ticks_ms() - startrender < 100): # hold 10 fps
                     time.sleep_ms(5)
@@ -241,9 +228,7 @@ class Kernel:
         #self.render_tick = time.ticks_ms()
         #self.blit_tick = time.ticks_ms()
         # the slow bit:
-        Single.Hardware.display.blit_buffer(self.framebuffer_array, 0, 0, Hardware.Hardware.DISPLAY_WIDTH, Hardware.Hardware.DISPLAY_HEIGHT) # O(1) for the whole render pipeline with that, but quite slow... but not much more than even a simple direct draw
-        # seems like to get more speed would need to do quite a lot on the C side of things
-
+        Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)
         '''if __debug__:
             ft = time.ticks_ms() - self.blit_tick
             print("took", ft, "ms to blit,", 1000/ft, "fps")'''
@@ -258,3 +243,7 @@ class Kernel:
             ft = time.ticks_ms() - self.render_tick
             print("took", ft, "ms to render,", 1000/ft, "fps")'''
 
+    def render_loading_program(self):
+        self.framebuffer.fill(0)
+        self.framebuffer.text("LOADING", 0.5 - Single.DEFAULT_TEXT_RATIO_INV * 3.5, 0.5 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_TEXT_COLOR)
+        Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)

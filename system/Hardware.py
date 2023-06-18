@@ -26,7 +26,7 @@ class Hardware:
         # BackLight Poweif fb[i*2*DISPLAY_HEIGHT + j*2] > 0 or fb[i*2*DISPLAY_HEIGHT + j*2 + 1] > 0:r
         self.pmu = axp202.PMU()
         self.pmu.enablePower(axp202.AXP202_LDO2)
-        self.pmu.setLDO2Voltage(2800) #default backlight level
+        self.pmu.setLDO2Voltage(2800) #default backlight level todo: load from settings
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         '''very low 3.3v rail to minimize power consumption,
         esp can go down to 2.3v (and might be fine down to 1.8v too)
@@ -44,6 +44,7 @@ class Hardware:
         self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
         self.pmu.clearIRQ()
         self.pmu.disableIRQ(axp202_constants.AXP202_ALL_IRQ)
+        # following uses the button which is broken on my test watch so might not work as expected, I will test it later with another watch
         self.pmu.write_byte(axp202_constants.AXP202_POK_SET, 0b00011001)  # power off time = 6s, longpress time = 1.5 seconds, timeout shutdow = yes
         self.pmu.enableIRQ(axp202_constants.AXP202_PEK_SHORTPRESS_IRQ)
         self.pmu.enableIRQ(axp202_constants.AXP202_PEK_LONGPRESS_IRQ)
@@ -52,7 +53,10 @@ class Hardware:
         #self.pmu.setTimeOutShutdown(True)
         #self.pmu.enableIRQ(axp202_constants.AXP202_ALL_IRQ)
         Logger.log("Initializing firmware pre-init graphics.")
-        display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, limit is 80Mhz
+        # shameful display of 3 wire SPI and slow updates
+        # why not 2-line or 4-line  SPI lilygo?
+        # also uses wrong MOSI pin, slowing it down even more, fixed on TWATCH S3
+        display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
         cs = machine.Pin(5, machine.Pin.OUT)
         dc = machine.Pin(27, machine.Pin.OUT)
         self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
@@ -62,9 +66,12 @@ class Hardware:
         Logger.log("Hi! Display initialized.")
         Logger.log("CPU frequ: " + str(machine.freq()))
         Logger.log("Flash Size: " + str(esp.flash_size()))
-        Logger.log("Unique ID: " + str(machine.unique_id()))
+        Logger.log("Unique ID: " + str(int.from_bytes(machine.unique_id(), 'big', False)))
         Logger.log("Reset Cause: " + str(machine.reset_cause()))
         Logger.log("Wake Cause: " + str(machine.wake_reason()))
+        network.hostname(str(int.from_bytes(machine.unique_id(), 'big', False))) # in case of multiple watches on same network
+        Logger.log("Hostname: " + str(network.hostname()))
+
 
         self.touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT)))
 
@@ -89,6 +96,7 @@ class Hardware:
 
         self.vibrator = machine.Pin(4, machine.Pin.OUT)
 
+
     def lightsleep(self, time_ms, force = False):
         if self.wifi_lock.locked() and not force:
             return False
@@ -109,6 +117,10 @@ class Hardware:
         self.display.sleep_mode(False)
         self.display.on()
         return True
+
+    def blit_buffer_rgb565(self, array):
+        self.display.blit_buffer(array, 0, 0, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT) # O(1) for the whole render pipeline with that, but quite slow... but not much more than even a simple direct draw
+        # seems like to get more speed would need to do quite a lot on the C side of things
 
     def feedback1(self):
         self.vibrator.on()

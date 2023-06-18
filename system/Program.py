@@ -5,7 +5,7 @@ import Events
 import time
 
 class Program:
-    def __init__(self, id = None, draw = False):
+    def __init__(self, id = None, draw = False, arg = None):
         self._lock = _thread.allocate_lock()
         self._draw = draw
         self.ready = False

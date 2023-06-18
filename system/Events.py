@@ -8,8 +8,9 @@ class FrontEvent(Event):
         super().__init__(t, s)
 
 class RunEvent(Event):
-    def __init__(self, programname, t = None, s = None):
+    def __init__(self, programname, arg = None, t = None, s = None):
         self.name = programname
+        self.arg = arg
         super().__init__(t, s)
 
 class StopEvent(Event):

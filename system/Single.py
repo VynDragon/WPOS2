@@ -1,5 +1,6 @@
 Kernel = None
 Hardware = None
+Settings = None
 fucky_wucky = False
 
 
@@ -12,4 +13,5 @@ DEFAULT_TEXT_COLOR = 0xFFFF
 DEFAULT_YESCOLOR = DEFAULT_OUTLINE_COLOR
 DEFAULT_NOCOLOR = DEFAULT_BG_COLOR
 DEFAULT_TEXT_RATIO = 30  #characters per line, 30 for 240x240 screen with 8 pixel large font
-DEFAULT_TEXT_RATIO_INV = 1/30  #expensive maths
+DEFAULT_TEXT_RATIO_INV = 1.0/DEFAULT_TEXT_RATIO  #expensive maths
+DEFAULT_TEXT_RATIO_INV_2 = DEFAULT_TEXT_RATIO_INV/2.0
