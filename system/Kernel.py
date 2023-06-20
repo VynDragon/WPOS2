@@ -53,13 +53,14 @@ class Kernel:
                 if __debug__:
                     print("processing ", this_event)
                 if isinstance(this_event, Events.RunEvent):
+                    self.loading_program = True
                     self.runProgram(this_event.name, this_event.arg)
                 elif isinstance(this_event, Events.StopEvent):
                     self.stopProgram(this_event.name)
                 else:
                     self.running_lock.acquire()
                     if isinstance(this_event, Events.FrontEvent) and this_event.t_program_id == None:
-                        self.running[-1].event(this_event)
+                        self.running[self.running_front].event(this_event)
                     else:
                         for program in self.running:
                             if program.id == this_event.t_program_id:
@@ -73,7 +74,6 @@ class Kernel:
     def runProgram(self, name, arg):
         if __debug__:
             print("in runProgram for ", name)
-        self.loading_program = True
         _thread.start_new_thread(self.runProgram2, (name, arg))
 
 
@@ -130,6 +130,11 @@ class Kernel:
         for prog in to_stop:
             prog._do_stop() # when called from itself, the thread kills itself in there, and if that doesnt happen somehow it will die when returning anyway.
 
+    def switchProgram(self, id = -1): # switches back to 'last' program by DEFAULT_TEXT_COLOR
+        # todo add a thing to not switch away from keyboard
+        self.running_front = id
+        return True
+
 
 
     def __init__(self):
@@ -148,6 +153,7 @@ class Kernel:
         self.kernel_thread = None
         self.input = deque((), 100)
         self.running = []
+        self.running_front = -1 #position in LIST, not thread id
         self.running_lock = _thread.allocate_lock()
 
 
@@ -180,7 +186,7 @@ class Kernel:
             _thread.start_new_thread(self.render_thread, ())
             self._lock.release()
             machine.freq(80000000) # we have done most of the init we can chill
-            self.event(Events.RunEvent("wifi_settings"))
+            self.event(Events.RunEvent("home"))
             while(True):
                 self._lock.acquire()
                 Logger.process()
@@ -235,7 +241,7 @@ class Kernel:
         app = None
         self.running_lock.acquire()
         if len(self.running) > 0:
-            app = self.running[-1]
+            app = self.running[self.running_front]
         self.running_lock.release()
         if app:
             app._do_draw(self.framebuffer)

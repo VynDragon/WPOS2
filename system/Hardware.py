@@ -5,7 +5,7 @@
 
 import machine, micropython, json, time, _thread, network
 import Logger
-import st7789, axp202, axp202_constants, ft6x36
+import st7789, axp202, axp202_constants, ft6x36, pcf8563, bma423
 import TextMode
 import Events
 import esp, esp32
@@ -20,13 +20,21 @@ class Hardware:
     RELEASE_TWITCHYNESS = 100
     def __init__(self):
         self.hardware = []
+        sObject = Single.Settings.getSettingObject(Single.Settings.Hardware)
+        if sObject == None:
+            sObject = {}
         Logger.log("Initializing Hardware...")
         machine.freq(240000000)
+
+
         Logger.log("Initializing AXP202 PMU...")
         # BackLight Poweif fb[i*2*DISPLAY_HEIGHT + j*2] > 0 or fb[i*2*DISPLAY_HEIGHT + j*2 + 1] > 0:r
         self.pmu = axp202.PMU()
         self.pmu.enablePower(axp202.AXP202_LDO2)
-        self.pmu.setLDO2Voltage(2800) #default backlight level todo: load from settings
+        if sObject.get("BacklightVoltage") != None:
+            self.pmu.setLDO2Voltage(sObject["BacklightVoltage"])
+        else:
+            self.pmu.setLDO2Voltage(2800) #default backlight level todo: load from settings (or load it from app 0)
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         '''very low 3.3v rail to minimize power consumption,
         esp can go down to 2.3v (and might be fine down to 1.8v too)
@@ -52,6 +60,8 @@ class Hardware:
         #self.pmu.setlongPressTime(axp202_constants.AXP_LONGPRESS_TIME_2S)
         #self.pmu.setTimeOutShutdown(True)
         #self.pmu.enableIRQ(axp202_constants.AXP202_ALL_IRQ)
+
+
         Logger.log("Initializing firmware pre-init graphics.")
         # shameful display of 3 wire SPI and slow updates
         # why not 2-line or 4-line  SPI lilygo?
@@ -72,8 +82,25 @@ class Hardware:
         network.hostname(str(int.from_bytes(machine.unique_id(), 'big', False))) # in case of multiple watches on same network
         Logger.log("Hostname: " + str(network.hostname()))
 
+        sensor_i2c = machine.SoftI2C(scl=machine.Pin(22, machine.Pin.OUT), sda=machine.Pin(21, machine.Pin.OUT))
+        self.rtc = pcf8563.PCF8563(sensor_i2c)
+
+        sObject_general = Single.Settings.getSettingObject(Single.Settings.general)
+        if sObject_general == None:
+            sObject_general = {}
+        gmt = Object_general.get["GMT"]
+        if gmt == None:
+            gmt = 0
+        dtt = (self.rtc.year()+2000 + gmt, self.rtc.month(), self.rtc.date(), self.rtc.day(), self.rtc.hours(), self.rtc.minutes(), self.rtc.seconds(), 0)
+        machine.RTC().datetime(dtt)
+        Logger.log("Time: " + str(machine.RTC().datetime()))
+
+
+        self.bma = bma423.BMA4(sensor_i2c)
+
 
         self.touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT)))
+
 
         pin38 = machine.Pin(38, machine.Pin.IN) #irq touch
         pin37 = machine.Pin(37, machine.Pin.IN) #irq external rtc
@@ -88,6 +115,7 @@ class Hardware:
         self.irq_touch_present = False
         self.irq_touch_time = 0
         self.irq_touch_fired_release = True
+        self.irq_gesture = 0
 
         #self.oldfb = bytearray(DISPLAY_WIDTH * DISPLAY_HEIGHT * 2)
 
@@ -133,6 +161,16 @@ class Hardware:
     def feedback_frame(self, _):
         self.vibrator.off()
 
+    def sync_ntp(self):
+        try:
+            ntptime.settime()
+            ct = time.gmtime()
+            Single.Hardware.rtc.write_all(ct[5],ct[4],ct[3],ct[6],ct[2],ct[1],ct[0]-2000)
+        except:
+            return False
+        return True
+
+
     def process(self):
         if not self.irq_touch_present and self.irq_touch_time + self.RELEASE_TWITCHYNESS < time.ticks_ms() and not self.irq_touch_fired_release:
             x = (self.irq_touch_buffer_pos1[0] << 8 | self.irq_touch_buffer_pos1[1]) & 0x0FFF
@@ -150,8 +188,9 @@ class Hardware:
                 self.irq_touch_present = True
                 self.irq_touch_fired_release = False
                 self.irq_touch_time = time.ticks_ms()
+                self.irq_gesture = self.touch.get_gesture()
             except Exception as e:
-                print("we shaint be there... And it's not okay, you might need to reboot(hardware irq)")
+                print("we shaint be there... And it's not okay, you might need to reboot(touch irq)")
                 print(e)
 
     def irq_touch_process(self, pin):
@@ -159,6 +198,8 @@ class Hardware:
         x = (self.irq_touch_buffer_pos1[0] << 8 | self.irq_touch_buffer_pos1[1]) & 0x0FFF
         y = (self.irq_touch_buffer_pos1[2] << 8 | self.irq_touch_buffer_pos1[3]) & 0x0FFF
         Single.Kernel.event(Events.TouchEvent(float(x) / float(Hardware.DISPLAY_WIDTH), float(y) / float(Hardware.DISPLAY_HEIGHT)))
+        if self.irq_gesture > 0:
+            Single.Kernel.event(Events.GestureEvent(self.irq_gesture))
 
     def fucky_wucky(self, e): # try to print exception to display
         from TextMode import TextMode_st7789
@@ -179,7 +220,7 @@ class Hardware:
         if self.wifi_lock.locked():
             self.wifi_lock.release()
         if self.wifi != None:
-            wifi.active(False)
+            self.wifi.active(False)
         return True
 
     def precheckWifi(self):
@@ -189,13 +230,24 @@ class Hardware:
             return False
         return True
 
-    def connectWifi(self): #get a ready wifi client, possibly with internet access
+    def connectWifi(self): #get a ready wifi client to the first available network, possibly with internet access
         if not self.precheckWifi():
             return None
+        sObject_wifi = Single.Settings.getSettingObject(Single.Settings.wifi)
         self.initWifi_STA()
         self.wifi.active(True)
-        # todo: connect to available configured network
-        return self.wifi
+        networks_scan = self.wifi.scan()
+        networks = [n[0].decode("utf-8") for n in networks_scan]
+        for a_network in networks:
+            a_pass = sObject_wifi.get(a_network)
+            if a_pass != None:
+                self.wifi.connect(a_network, a_pass)
+                while self.wifi.status() == network.STAT_CONNECTING:
+                    time.sleep_ms(500)
+                if self.wifi.status() == network.STAT_GOT_IP:
+                    self.wifi.config(pm=self.wifi.PM_POWERSAVE)
+                    return self.wifi
+        return None
 
     def initWifi_AP(self): #let user do
         if not self.precheckWifi():

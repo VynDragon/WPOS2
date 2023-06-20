@@ -3,7 +3,32 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-import framebuf
+import framebuf, writer, Single
+
+class WPPalette(framebuf.FrameBuffer):
+    def __init__(self):
+        buf = bytearray(4)
+        buf[0] = 0
+        buf[1] = 0
+        buf[2] = 0xFF
+        buf[3] = 0xFF
+        super().__init__(buf, 2, 1, framebuf.RGB565)
+
+    def fg(self, color):  # Set foreground color
+        self.pixel(1, 0, color)
+
+    def bg(self, color):
+        self.pixel(0, 0, color)
+
+class WriterFrameBuffer(framebuf.FrameBuffer):
+    def __init__(self, buffer, width, height, format, stride = None):
+        if stride == None:
+            super().__init__(buffer, width, height, format, width)
+        else:
+            super().__init__(buffer, width, height, format, stride)
+        self.width = width
+        self.height = height
+        self.palette = WPPalette()
 
 class WPFrameBuffer(framebuf.FrameBuffer):
     def __init__(self, buffer, width, height, format, stride = None):
@@ -12,12 +37,13 @@ class WPFrameBuffer(framebuf.FrameBuffer):
         else:
             super().__init__(buffer, width, height, format, stride)
         self.width = width
-        self.height = height # and then we accidentaly had support for writer
-        # maybe we should've used nano-gui
+        self.height = height
         self.maxX = None
         self.maxY = None
         self.minX = None
         self.minY = None
+        self.palette = WPPalette()
+        self.fb = WriterFrameBuffer(buffer, width, height, framebuf.RGB565) # regular framebuffer backed by same buffer for high performance access (with no floats but requires device awareness)
 
     def update_max(self, x, y):
         if self.maxX == None:
@@ -71,6 +97,12 @@ class WPFrameBuffer(framebuf.FrameBuffer):
         self.update_max(x, y)
         self.update_max(x + 8 * len(s), y+8)
         super().text(s, int(x * self.width), int(y * self.height), c)
+
+    def text2(self, s, x, y, font):
+        the_writer = writer.CWriter(self.fb , font, Single.DEFAULT_TEXT_COLOR, Single.DEFAULT_BG_COLOR, False)
+        the_writer.set_textpos(self.fb, int(x * self.width), int(y * self.height))
+        the_writer.printstring(s)
+
 
     def blit(self, fbuf, x, y, key=-1, palette = None):
         #self.update_max(x, y)

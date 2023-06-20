@@ -5,6 +5,8 @@ class Settings:
 
     wifi = "Wifi"
     home = "Home"
+    general = "Settings"
+    hardware = "Hardware"
 
     def __init__(self):
         try:

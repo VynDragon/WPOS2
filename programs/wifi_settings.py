@@ -59,7 +59,8 @@ class wifi_settings(Program):
         if self.sObject == None:
             self.sObject = {}
         if self.textfield.value == "":
-            self.sObject.pop(self.networks[self.nb])
+            if self.sObject.get(self.networks[self.nb]):
+                self.sObject.pop(self.networks[self.nb])
         else:
             self.sObject[self.networks[self.nb]] = self.textfield.value
         Single.Settings.saveSettingObject(Single.Settings.wifi, self.sObject) # in this program we only call the textfield's event from think so this is fine (it will be done in the think thread of this program)

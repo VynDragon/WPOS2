@@ -5,7 +5,8 @@ class Event:
 
 class FrontEvent(Event):
     def __init__(self, t = None, s = None):
-        super().__init__(t, s)
+        self.t_program_id = t
+        self.s_program_id = s
 
 class RunEvent(Event):
     def __init__(self, programname, arg = None, t = None, s = None):
@@ -22,12 +23,18 @@ class TouchEvent(FrontEvent):
     def __init__(self, x, y, t = None, s = None):
         self.x = x
         self.y = y
-        super().__init__(t, s)
+        self.t_program_id = t
+        self.s_program_id = s # it doesnt like if spam, recursion error because of super() when called from irq handler, so go... manual unfolding?
 
 class ReleaseEvent(FrontEvent):
     def __init__(self, x, y, t = None, s = None):
         self.x = x
         self.y = y
+        super().__init__(t, s)
+
+class GestureEvent(Event):
+    def __init__(self, gesture, t = None, s = None):
+        self.gesture = gesture
         super().__init__(t, s)
 
 class ButtonEvent(Event):
