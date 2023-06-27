@@ -100,7 +100,7 @@ class WPFrameBuffer(framebuf.FrameBuffer):
 
     def text2(self, s, x, y, font):
         the_writer = writer.CWriter(self.fb , font, Single.DEFAULT_TEXT_COLOR, Single.DEFAULT_BG_COLOR, False)
-        the_writer.set_textpos(self.fb, int(x * self.width), int(y * self.height))
+        the_writer.set_textpos(self.fb, int(y * self.height), int(x * self.width)) # ?? different x y order than other fucntions?
         the_writer.printstring(s)
 
 

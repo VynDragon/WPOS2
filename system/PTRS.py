@@ -3,6 +3,7 @@
 
 import Events
 import Single
+import framebuf
 
 class Button:
     TOUCH_LAST = 5 # 5 frames
@@ -168,5 +169,44 @@ class TextField:
             buff.text(fstr, self.x, self.y + self.h / 2.0 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_TEXT_COLOR)
         else:
             buff.text(self.value, self.x, self.y + self.h / 2.0 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_TEXT_COLOR)
+
+class Graph:
+    def __init__(self, x, y, w, h, bg = True, callback = None, name = ""):
+        self.x = x
+        self.y = y
+        self.w = w
+        self.rw = int(w * Single.Hardware.DISPLAY_WIDTH)
+        self.h = h
+        self.rh = int(h * Single.Hardware.DISPLAY_HEIGHT)
+        self.bg = bg
+        self.name = name
+        self.callback = callback
+        self.last_value = 0.0
+        if callback == None:
+            self.callback = self.default_callback
+        self.draw_buff = framebuf.FrameBuffer(bytearray(self.rw * self.rh * 2), self.rw, self.rh, framebuf.RGB565)
+        if self.bg:
+            self.draw_buff.rect(0, 0, self.rw, self.rh, Single.DEFAULT_COLOR, True)
+    def default_callback(self):
+        pass
+
+    @micropython.native
+    def event(self, event):
+        if isinstance(event, Events.ReleaseEvent):
+            if event.x > self.x and event.x < self.x + self.w and event.y > self.y and event.y < self.y + self.h:
+                self.callback()
+
+    @micropython.native
+    def draw(self, buff):
+        buff.blit(self.draw_buff, self.x, self.y)
+        buff.rect(self.x, self.y, self.w, self.h, Single.DEFAULT_OUTLINE_COLOR)
+
+    @micropython.native
+    def add_point(self, value, color = Single.DEFAULT_TEXT_COLOR):
+        self.draw_buff.scroll(-1, 0)
+        self.draw_buff.vline(self.rw - 2, 0, self.rh, Single.DEFAULT_COLOR)
+        self.draw_buff.line(self.rw - 2, int((1.0 - self.last_value) * self.rh), self.rw - 2, int((1.0 - value) * self.rh), color)
+        self.last_value = value
+
 
 

@@ -173,10 +173,10 @@ class Kernel:
             Logger.log("Hardware thread: " + str(checkHardwareThread()))
             if not self._lock.acquire():
                 Logger.log("Couldnt lock Kernel lock, probably a major issue")
-            self.hardware = Hardware.Hardware()
-            Single.Hardware = self.hardware
             self.settings = Settings.Settings()
             Single.Settings = self.settings
+            self.hardware = Hardware.Hardware()
+            Single.Hardware = self.hardware
             self.framebuffer_array = bytearray(240 * 240 * 2) # 2 byte per pixel
             #Kernel.framebuffer = oframebuf.OFrameBuffer(Kernel.framebuffer_array, 240, 240, framebuf.RGB565)
             #Kernel.framebuffer = framebuf.FrameBuffer(Kernel.framebuffer_array, 240, 240, framebuf.RGB565)
