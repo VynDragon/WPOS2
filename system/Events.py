@@ -58,3 +58,8 @@ class TextFieldEvent(Event): #Textfield update
         self.field = field
         super().__init__(t, s)
 
+class IMUEvent(Event):
+    def __init__(self, int, t = None, s = None):
+        self.int = int
+        super().__init__(t, s)
+

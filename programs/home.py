@@ -10,7 +10,7 @@ import led_32
 
 class home(Program):
 
-    cycle_sleep = 25
+    cycle_sleep = 50
 
     def __init__(self, id = None, draw = False, arg = None):
         super().__init__(id, True)
@@ -46,18 +46,30 @@ class home(Program):
                         pass # todo: switch back to app if we werente front app
         except IndexError:
             self.sleep_counter += 1
-        print(self.sleep_counter)
-        #if self.sleep_counter > self.cycle_sleep:
-            #while len(Single.Hardware.touch.get_positions()) < 1: # i guess home should get special rights because it is app 0, though it's better to avoid as much as possible
-            #while self.sleep_counter > 4:
-         #       Single.Hardware.lightsleep(2000)
-          #      time.sleep_ms(100)
-           # self.sleep_counter = 0
+        #print(self.sleep_counter)
+        if self.sleep_counter > self.cycle_sleep:
+            Single.Hardware.lightsleep(500, False, self.sleep_callback)
+            self.sleep_counter = 0
         self.percent = Single.Hardware.get_battery_gauge()
         self.mv = Single.Hardware.get_battery_voltage()
         self.ma = Single.Hardware.get_battery_current()
         self.ampgraph.add_point(self.ma / 80.0)
         time.sleep_ms(100)
+
+    def sleep_callback(self):
+        time.sleep_ms(25)
+        self.ma = Single.Hardware.get_battery_current()
+        self.ampgraph.add_point(self.ma / 80.0, Single.DEFAULT_BG_COLOR)
+        try:
+            while True: #event treatment
+                event = self.input.popleft()
+                if isinstance(event, Events.IMUEvent):
+                    if event.int == 32:
+                        return False
+
+        except IndexError:
+            pass
+        return True
 
 
     #@micropython.native

@@ -34,7 +34,7 @@ class Hardware:
         if sObject.get("BacklightVoltage") != None:
             self.pmu.setLDO2Voltage(sObject["BacklightVoltage"])
         else:
-            self.pmu.setLDO2Voltage(2550) #default backlight level todo: load from settings (or load it from app 0)
+            self.pmu.setLDO2Voltage(2650) #default backlight level todo: load from settings (or load it from app 0)
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         '''very low 3.3v rail to minimize power consumption,
         esp can go down to 2.3v (and might be fine down to 1.8v too)
@@ -97,15 +97,49 @@ class Hardware:
         if gmt == None:
             gmt = 0
         gmt = self.rtc.hours() + gmt
-        if gmt > 24:
+        day = self.rtc.date()
+        weekday = self.rtc.day()
+        if gmt > 23:
+            day += 1
+            weekday += 1
             gmt -= 24
-        dtt = (self.rtc.year()+2000, self.rtc.month(), self.rtc.date(), self.rtc.day(), gmt, self.rtc.minutes(), self.rtc.seconds(), 0)
+            if day > 31:
+                day -= 31
+            if weekday > 6:
+                weekday -= 7
+        dtt = (self.rtc.year()+2000, self.rtc.month(), day, weekday, gmt, self.rtc.minutes(), self.rtc.seconds(), 0)
         machine.RTC().datetime(dtt)
         Logger.log("Time: " + str(machine.RTC().datetime()))
 
 
-        self.bma = bma423.BMA4(sensor_i2c)
+        bouf = bytearray(1)  # reset bma for when we shut down without cutting power because for some reason it likes to lose its register when esp32 resets
+        bouf[0] = 0xB6 #reset command
+        sensor_i2c.writeto_mem(bma423.BMA4_I2C_ADDR_SECONDARY, bma423.BMA4_CMD_ADDR, bouf) # there is trace of this being previously done in the drivers but not anymore?
+        self.bma = bma423.BMA423(sensor_i2c) # re-initialize
+        self.bma.accel_range = 2
+        self.bma.advance_power_save = 0
+        #print("BMA internal status:", self.bma.read_byte(bma423.BMA4_INTERNAL_STAT))
+        #self.bma.feature_enable("wakeup")
+        #self.bma.feature_enable("any_motion")
+        #self.bma.feature_enable("tilt")
+        #int1config = self.bma.read_byte(bma423.BMA4_INT1_IO_CTRL_ADDR)
+        int1config = 0b01010
+        self.bma.write_byte(bma423.BMA4_INT1_IO_CTRL_ADDR, int1config)
+        #acc_config = 0x17
+        #self.bma.write_byte(bma423.BMA4_ACCEL_CONFIG_ADDR, acc_config)
+        #print("int1 bma:", self.bma.read_byte(bma423.BMA4_INT1_IO_CTRL_ADDR))
+        self.bma.map_int(0, bma423.BMA423_WAKEUP_INT | bma423.BMA423_ANY_NO_MOTION_INT | bma423.BMA423_TILT_INT)
+        self.bma.map_int(1, 0)
+        feat_data = self.bma.read_data(bma423.BMA4_FEATURE_CONFIG_ADDR, bma423.BMA423_FEATURE_SIZE)
+        feat_data[bma423.BMA423_WAKEUP_OFFSET] = 0x03 # enable and sensitivity 2/7
+        self.bma.write_data(bma423.BMA4_FEATURE_CONFIG_ADDR, feat_data)
+        #print(list(feat_data))
+        self.bma.accel_enable = 1
+        #print(self.bma.int_status())
+        #print("BMA internal status:", self.bma.read_byte(bma423.BMA4_INTERNAL_STAT))
 
+        self.imu_int1 = 0
+        self.imu_int2 = 0
 
         self.touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT)))
         # something is seriously wrong with gestures on this controller
@@ -128,8 +162,10 @@ class Hardware:
         pin35 = machine.Pin(35, machine.Pin.IN) #irq axp202
         #esp32.wake_on_ext1((pin35, pin39, pin38, pin37), esp32.WAKEUP_ANY_HIGH)
         #esp32.wake_on_ext0(pin35, esp32.WAKEUP_ALL_LOW)
-        pin35.irq(self.irq_pmu, trigger=machine.Pin.IRQ_FALLING)
+        pin35.irq(self.irq_pmu, trigger=machine.Pin.IRQ_FALLING, wake=machine.DEEPSLEEP | machine.SLEEP)
         pin38.irq(self.irq_touch, trigger= machine.Pin.IRQ_RISING)
+        pin39.irq(self.irq_imu, trigger= machine.Pin.IRQ_RISING, wake=machine.DEEPSLEEP | machine.SLEEP)
+        #print("pin 39 is", pin39.value())
 
         self.irq_touch_buffer_pos1 = bytearray(4) #pre-allocation
         self.irq_touch_buffer_pos2 = bytearray(4)
@@ -159,7 +195,7 @@ class Hardware:
     def charging(self):
         return bool(self.pmu.isChargeing())
 
-    def lightsleep(self, time_ms, force = False):
+    def lightsleep(self, time_ms, force = False, callback = None):
         if self.wifi_lock.locked() and not force:
             return False
         elif self.wifi_lock.locked() and force:
@@ -169,11 +205,17 @@ class Hardware:
         self.pmu.disablePower(axp202_constants.AXP202_LDO2)
         self.pmu.disablePower(axp202_constants.AXP202_LDO3)
         self.pmu.disablePower(axp202_constants.AXP202_LDO4)
-        #self.pmu.disablePower(axp202_constantsreadfrom_mem_into.AXP202_DCDC2)
+        self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
         self.pmu.clearIRQ()
         self.touch.power_mode = 1 # 0 = Active, 1 = Monitor, 2= Standby, 3= Hibernate
         #comes out of monitor whenever we touch
-        machine.lightsleep(time_ms)
+        should_sleep = True
+        while should_sleep:
+            machine.lightsleep(time_ms)
+            if callback != None:
+                should_sleep = callback()
+            else:
+                should_sleep = False
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         self.pmu.enablePower(axp202_constants.AXP202_LDO2)
         self.display.sleep_mode(False)
@@ -205,9 +247,17 @@ class Hardware:
                 sObject_general = {}
             gmt = sObject_general.get("GMT")
             gmt = self.rtc.hours() + gmt
-            if gmt > 24:
+            day = self.rtc.date()
+            weekday = self.rtc.day()
+            if gmt > 23:
+                day += 1
+                weekday += 1
                 gmt -= 24
-            machine.RTC().datetime((ct[0], ct[1], ct[2], ct[6] + 1, gmt, ct[4], ct[5], 0))
+                if day > 31:
+                    day -= 31
+                if weekday > 6:
+                    weekday -= 7
+            machine.RTC().datetime((ct[0], ct[1], day, ct[6] + 1, gmt, ct[4], ct[5], 0))
         except:
             return False
         return True
@@ -223,13 +273,22 @@ class Hardware:
        #     self.irq_touch_fired_release = True
 
 
+
+    def irq_imu(self, pin):
+        self.imu_int1, self.imu_int2 = Single.Hardware.bma.int_status()
+        micropython.schedule(self.irq_imu_process, pin)
+
+    def irq_imu_process(self, pin):
+        if self.imu_int1 > 0:
+            Single.Kernel.event(Events.IMUEvent(self.imu_int1))
+
     def irq_pmu(self, pin):
         micropython.schedule(self.irq_pmu_process, pin)
 
     def irq_pmu_process(self, pin):
         self.pmu.readIRQ()
         print("irq_pmu:", list(self.pmu.irqbuf))
-        if self.pmu.irqbuf[0] & axp202_constants.AXP202_VBUS_REMOVED_IRQ > 0: #workaround for brownout and other bugs when disconnect USB
+        if self.pmu.irqbuf[0] & axp202_constants.AXP202_VBUS_REMOVED_IRQ > 0: #workaround for brownouts and other bugs when disconnect USB
             machine.reset()
         self.pmu.clearIRQ()
 
