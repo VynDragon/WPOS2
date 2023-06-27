@@ -46,9 +46,8 @@ class home(Program):
                         pass # todo: switch back to app if we werente front app
         except IndexError:
             self.sleep_counter += 1
-        #print(self.sleep_counter)
         if self.sleep_counter > self.cycle_sleep:
-            Single.Hardware.lightsleep(500, False, self.sleep_callback)
+            Single.Hardware.lightsleep(1000, False, self.sleep_callback)
             self.sleep_counter = 0
         self.percent = Single.Hardware.get_battery_gauge()
         self.mv = Single.Hardware.get_battery_voltage()
@@ -57,7 +56,7 @@ class home(Program):
         time.sleep_ms(100)
 
     def sleep_callback(self):
-        time.sleep_ms(25)
+        time.sleep_ms(25) # give it a little time to find its bearing.. i guess?
         self.ma = Single.Hardware.get_battery_current()
         self.ampgraph.add_point(self.ma / 80.0, Single.DEFAULT_BG_COLOR)
         try:
@@ -72,7 +71,7 @@ class home(Program):
         return True
 
 
-    #@micropython.native
+    @micropython.native
     def draw(self, buff):
         buff.fill(0)
         if self.mode == 0:
