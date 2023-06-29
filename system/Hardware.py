@@ -18,7 +18,63 @@ class Hardware:
     DISPLAY_WIDTH = 240
     DISPLAY_HEIGHT = 240
     #RELEASE_TWITCHYNESS = 100 dont need anymore since we figured the touchscreen already does that, contrary to our driver
+
+    def identify_version(self):
+        try:
+            self.pmu.disablePower(axp202_constants.AXP202_LDO3)
+            touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT), freq=100000))
+            touch.power_mode = 0
+            return 0 #V1
+        except OSError:
+            pass
+        self.pmu.setLDO3Voltage(3300)
+        self.pmu.enablePower(axp202_constants.AXP202_LDO3)
+        self.pmu.disablePower(axp202_constants.AXP202_EXTEN); # reset touch
+        time.sleep_ms(10)
+        self.pmu.enablePower(axp202_constants.AXP202_EXTEN);
+        touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT), freq=100000))
+        touch.power_mode = 0
+        return 1 #V2
+
+    def init_ft6336(self):
+        if self.WatchVersion == 1:
+            self.pmu.disablePower(axp202_constants.AXP202_EXTEN); # reset touch
+            time.sleep_ms(15)
+            self.pmu.enablePower(axp202_constants.AXP202_EXTEN);
+        self.touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT), freq=100000))
+        self.touch.power_mode = 0
+        # something is seriously wrong with gestures on this controller
+        # we probably need to upload a firmware blob to the device and from looking at drivers, it is complicated and i dont want to bother
+        self.irq_gesture_buffer_1 = bytearray(2)
+        self.irq_gesture_buffer_1[0] = 0x00 # 1 = 'enter into gesture', disables touch :(, 0: 'disable or resume'
+        self.irq_gesture_buffer_1[1] = 0x00 # 1 = gestures enabled, 0: gestures disabled (theory)
+        self.touch._i2c.writeto_mem(self.touch._address, 0xD0, self.irq_gesture_buffer_1) #gestures, bad focaltech datasheet
+        '''self.irq_gesture_buffer_2 = bytearray(2)
+        tmpbuff = bytearray(1)
+        tmpbuff[0] = 0x03
+        self.touch._i2c.writeto_mem(self.touch._address, 0x94, tmpbuff) #assuming this is in number of points, testing show we rarely get over ten sliding over the entire screen
+        self.touch._i2c.writeto_mem(self.touch._address, 0x95, tmpbuff)'''
+
+    def init_st7789(self):
+        display_spi = machine.SPI(1)
+        display_spi.deinit()
+        # shameful display of 3 wire SPI and slow updates
+        # why not 2-line or 4-line  SPI lilygo?
+        # also uses wrong MOSI pin, slowing it down even more, fixed on TWATCH S3
+        cs = machine.Pin(5, machine.Pin.OUT)
+        dc = machine.Pin(27, machine.Pin.OUT)
+        if self.WatchVersion == 1:
+            display_spi = machine.SPI(1,baudrate=40000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
+            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(25, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+        else:
+            display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
+            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+        self.display.init()
+        self.display.on()
+        self.display.fill(st7789.BLACK)
+
     def __init__(self):
+        self.WatchVersion = 0 # V1
         self.hardware = []
         sObject = Single.Settings.getSettingObject(Single.Settings.hardware)
         if sObject == None:
@@ -34,7 +90,7 @@ class Hardware:
         if sObject.get("BacklightVoltage") != None:
             self.pmu.setLDO2Voltage(sObject["BacklightVoltage"])
         else:
-            self.pmu.setLDO2Voltage(2650) #default backlight level todo: load from settings (or load it from app 0)
+            self.pmu.setLDO2Voltage(2800) #default backlight level todo: load from settings (or load it from app 0)
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         '''very low 3.3v rail to minimize power consumption,
         esp can go down to 2.3v (and might be fine down to 1.8v too)
@@ -47,8 +103,8 @@ class Hardware:
         mic: 1.6v
         psram: 2.7v :(
         '''
-        self.pmu.disablePower(axp202_constants.AXP202_LDO3)
-        self.pmu.disablePower(axp202_constants.AXP202_LDO4)
+        self.pmu.disablePower(axp202_constants.AXP202_LDO3) # on V2, Touch+ TFT
+        self.pmu.disablePower(axp202_constants.AXP202_LDO4) # on V2, GPS
         self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
         self.pmu.clearIRQ()
         self.pmu.disableIRQ(axp202_constants.AXP202_ALL_IRQ)
@@ -64,20 +120,21 @@ class Hardware:
         #self.pmu.setTimeOutShutdown(True)
         #self.pmu.enableIRQ(axp202_constants.AXP202_ALL_IRQ)
 
-        self.pmu.setChargingTargetVoltage(axp202_constants.AXP202_TARGET_VOL_4_15V) # sane voltage values for battery management
+        self.pmu.setChargingTargetVoltage(axp202_constants.AXP202_TARGET_VOL_4_2V) # sane voltage values for battery management
 
+        self.WatchVersion = self.identify_version()
+        self.display_lock = _thread.allocate_lock() # for locking render while we sleep, notably on V2 watch where we need to re-initialize at wake up
+        self.display_lock.acquire()
+
+        if self.WatchVersion == 1:
+            self.pmu.setLDO3Voltage(3300)
+            self.pmu.enablePower(axp202_constants.AXP202_LDO3)
+            time.sleep_ms(10)
 
         Logger.log("Initializing firmware pre-init graphics.")
-        # shameful display of 3 wire SPI and slow updates
-        # why not 2-line or 4-line  SPI lilygo?
-        # also uses wrong MOSI pin, slowing it down even more, fixed on TWATCH S3
-        display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
-        cs = machine.Pin(5, machine.Pin.OUT)
-        dc = machine.Pin(27, machine.Pin.OUT)
-        self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
-        self.display.init()
-        self.display.on()
-        self.display.fill(st7789.BLACK)
+
+        self.init_st7789()
+
         Logger.log("Hi! Display initialized.")
         Logger.log("CPU frequ: " + str(machine.freq()))
         Logger.log("Flash Size: " + str(esp.flash_size()))
@@ -141,19 +198,7 @@ class Hardware:
         self.imu_int1 = 0
         self.imu_int2 = 0
 
-        self.touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT), freq=100000))
-        self.touch.power_mode = 0
-        # something is seriously wrong with gestures on this controller
-        # we probably need to upload a firmware blob to the device and from looking at drivers, it is complicated and i dont want to bother
-        self.irq_gesture_buffer_1 = bytearray(2)
-        self.irq_gesture_buffer_1[0] = 0x00 # 1 = 'enter into gesture', disables touch :(, 0: 'disable or resume'
-        self.irq_gesture_buffer_1[1] = 0x00 # 1 = gestures enabled, 0: gestures disabled (theory)
-        self.touch._i2c.writeto_mem(self.touch._address, 0xD0, self.irq_gesture_buffer_1) #gestures, bad focaltech datasheet
-        '''self.irq_gesture_buffer_2 = bytearray(2)
-        tmpbuff = bytearray(1)
-        tmpbuff[0] = 0x03
-        self.touch._i2c.writeto_mem(self.touch._address, 0x94, tmpbuff) #assuming this is in number of points, testing show we rarely get over ten sliding over the entire screen
-        self.touch._i2c.writeto_mem(self.touch._address, 0x95, tmpbuff)'''
+        self.init_ft6336()
 
         self.gesture_startpos = (0,0) # gesture emulation
 
@@ -182,6 +227,7 @@ class Hardware:
         self.vibrator = machine.Pin(4, machine.Pin.OUT)
 
         machine.freq(80000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
+        self.display_lock.release()
 
 
     def get_battery_gauge(self): # 0-127
@@ -203,14 +249,21 @@ class Hardware:
             return False
         elif self.wifi_lock.locked() and force:
             self.releaseWifi(force) # fuck them apps
+        if not self.display_lock.acquire():
+            if force:
+                self.display_lock.release()
+                self.display_lock.acquire()
+            else:
+                return False
+        machine.freq(240000000) # go fastly to go to sleep faster
         self.display.off()
         self.display.sleep_mode(True)
         self.pmu.disablePower(axp202_constants.AXP202_LDO2)
-        self.pmu.disablePower(axp202_constants.AXP202_LDO3)
+        self.pmu.disablePower(axp202_constants.AXP202_LDO3) # shutdown full LCD in case of V2 watch
         self.pmu.disablePower(axp202_constants.AXP202_LDO4)
         self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
         self.pmu.clearIRQ()
-        self.touch.power_mode = 1 # 0 = Active, 1 = Monitor, 2= Standby, 3= Hibernate
+        # 0 = Active, 1 = Monitor, 2= Standby, 3= Hibernate
         #comes out of monitor whenever we touch
         # power mode is NOT documented but this should work
         # hibernation of FT6336 is up to 1.5 ma savings (active:4mA, monitor: 1.5mA, hibernate: 50 uA)
@@ -218,19 +271,28 @@ class Hardware:
         # monitor mode low rate of update good workaround?
         should_sleep = True
         while should_sleep:
-            self.touch.monitor_period = 254 # low refresh? Seems to work (datasheet says 25 time a second and default value is 40, i suppose that's milliseconds)
-            print(self.touch.monitor_period)
-            self.touch.power_mode = 1
+            if self.WatchVersion == 0:
+                self.touch.monitor_period = 254 # low refresh? Seems to work (datasheet says 25 time a second and default value is 40, i suppose that's milliseconds)
+                self.touch.power_mode = 1
             machine.lightsleep(time_ms)
             if callback != None:
                 should_sleep = callback()
             else:
                 should_sleep = False
-        self.touch.power_mode = 0
+        if self.WatchVersion == 0:
+            self.touch.power_mode = 0
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         self.pmu.enablePower(axp202_constants.AXP202_LDO2)
+        if self.WatchVersion == 1:
+            self.pmu.setLDO3Voltage(3300)
+            self.pmu.enablePower(axp202_constants.AXP202_LDO3)
+            time.sleep_ms(20) # wait for potaaytoes to be warmed up
+            self.init_ft6336()
+            self.init_st7789()
         self.display.sleep_mode(False)
         self.display.on()
+        machine.freq(80000000) # no more fast, todo: see other place where this is
+        self.display_lock.release()
         return True
 
     def blit_buffer_rgb565(self, array):
@@ -301,10 +363,16 @@ class Hardware:
         print("irq_pmu:", list(self.pmu.irqbuf))
         if self.pmu.irqbuf[0] & axp202_constants.AXP202_VBUS_REMOVED_IRQ > 0: #workaround for brownouts and other bugs when disconnect USB
             machine.reset()
+        if self.pmu.irqbuf[2] & axp202_constants.AXP202_VBUS_REMOVED_IRQ > 0: #actually AXP202_PEK_SHORTPRESS_IRQ!
+            Single.Kernel.event(Events.PhysButtonEvent(0))
+        if self.pmu.irqbuf[2] & axp202_constants.AXP202_VBUS_VHOLD_LOW_IRQ > 0: #actually AXP202_PEK_LONGPRESS_IRQ!
+            Single.Kernel.event(Events.PhysButtonEvent(1.5))
         self.pmu.clearIRQ()
 
 
     def irq_touch(self, pin):
+        #if self.display_lock.locked(): # dont query display it is *busy*
+        #    return
         if not self.irq_touch_present:
             try:
                 self.touch._i2c.readfrom_mem_into(self.touch._address, ft6x36._P1_XH_REG, self.irq_touch_buffer_pos1) #save positions at time of irq, processing it fast is not guratanteed
@@ -313,6 +381,8 @@ class Hardware:
                 self.irq_touch_present = True
                 #self.irq_touch_fired_release = False
                 self.irq_touch_time = time.ticks_ms()
+            except OSError:
+                pass # that's a possibility on V2 because we cant check lock in irq without cause issues
             except Exception as e:
                 print("we shaint be there... And it's not okay, you might need to reboot(touch irq)")
                 print(e)
@@ -380,6 +450,8 @@ class Hardware:
         if not self.precheckWifi():
             return None
         sObject_wifi = Single.Settings.getSettingObject(Single.Settings.wifi)
+        if sObject_wifi == None:
+            sObject_wifi = {}
         self.initWifi_STA()
         self.wifi.active(True)
         networks_scan = self.wifi.scan()

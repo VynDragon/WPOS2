@@ -15,7 +15,7 @@
 
 ## Installing:
 - Go to micropython folder from this repository and follow instructions
-- Copy ALL the .py (and ONLY the .py, there is only python files that go in the watch for now) files from this repository to the watch, keeping the folders (CopyToWatch.sh might do it all for you)
+- Copy ALL the .py and .fw (and ONLY the .py and .fw, there is only python files that go in the watch for now) files from this repository to the watch, keeping the folders (CopyToWatch.sh might do it all for you)
 - devices.json is optional, look into Hardware.py for why (but might come handy to you)
 
 ## Modifying for other platforms
@@ -28,4 +28,7 @@ Dont expect fast display on anything but T-WATCH S3, the 2020 watches uses the w
 
 I've also capped the FPS to 10 by default, there is a way to uncap it from applications (but be aware that blitting the full screen takes at minimum about 40ms on T-WATCH 2020 V1)
 
-T-Watch 2020 V1 uses about 3ma in light sleep with current code
+T-Watch 2020 V1 uses about 1.6ma in light sleep with current code
+
+
+Currently Only T-Watch V1 and T-Watch V2 have been tested, I do not own any V3.

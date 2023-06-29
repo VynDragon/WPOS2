@@ -228,7 +228,9 @@ class Kernel:
         #self.render_tick = time.ticks_ms()
         #self.blit_tick = time.ticks_ms()
         # the slow bit:
-        Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)
+        if Single.Hardware.display_lock.acquire():
+            Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)
+            Single.Hardware.display_lock.release()
         '''if __debug__:
             ft = time.ticks_ms() - self.blit_tick
             print("took", ft, "ms to blit,", 1000/ft, "fps")'''
@@ -246,4 +248,6 @@ class Kernel:
     def render_loading_program(self):
         self.framebuffer.fill(0)
         self.framebuffer.text("LOADING", 0.5 - Single.DEFAULT_TEXT_RATIO_INV * 3.5, 0.5 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_TEXT_COLOR)
-        Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)
+        if Single.Hardware.display_lock.acquire():
+            Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)
+            Single.Hardware.display_lock.release()

@@ -65,6 +65,8 @@ class home(Program):
                 if isinstance(event, Events.IMUEvent):
                     if event.int == 32:
                         return False
+                elif isinstance(event, Events.PhysButtonEvent):
+                    return False
 
         except IndexError:
             pass

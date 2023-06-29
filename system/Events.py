@@ -42,6 +42,11 @@ class ButtonEvent(Event):
         self.button = button
         super().__init__(t, s)
 
+class PhysButtonEvent(Event):
+    def __init__(self, time, t = None, s = None):
+        self.time = time
+        super().__init__(t, s)
+
 
 class SliderEvent(Event):
     def __init__(self, slider, t = None, s = None):
