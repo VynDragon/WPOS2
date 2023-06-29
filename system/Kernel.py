@@ -140,7 +140,6 @@ class Kernel:
     def __init__(self):
         self._lock = _thread.allocate_lock() # lock for IRQ
         self.render_ref = self.render
-        self.render_timer = machine.Timer(3)
         self.render_tick = time.ticks_ms()
         self.blit_tick = time.ticks_ms()
         self.max_refresh = False
@@ -177,15 +176,10 @@ class Kernel:
             Single.Settings = self.settings
             self.hardware = Hardware.Hardware()
             Single.Hardware = self.hardware
-            self.framebuffer_array = bytearray(240 * 240 * 2) # 2 byte per pixel
-            #Kernel.framebuffer = oframebuf.OFrameBuffer(Kernel.framebuffer_array, 240, 240, framebuf.RGB565)
-            #Kernel.framebuffer = framebuf.FrameBuffer(Kernel.framebuffer_array, 240, 240, framebuf.RGB565)
+            self.framebuffer_array = bytearray(240 * 240 * 2) # 2 byte per pixel)
             self.framebuffer = oframebuf.WPFrameBuffer(self.framebuffer_array, 240, 240, framebuf.RGB565)
-            #self.render_timer.init(mode=machine.Timer.PERIODIC, period=70, callback=self.render_callback) # 100 ms (10fps), starting the timer there seems to keep it on the same thread,
-            # seems to be about how fast the SPI interface can keep up while hitting few cant keep up
             _thread.start_new_thread(self.render_thread, ())
             self._lock.release()
-            machine.freq(80000000) # we have done most of the init we can chill
             self.event(Events.RunEvent("home"))
             while(True):
                 self._lock.acquire()

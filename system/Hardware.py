@@ -87,7 +87,7 @@ class Hardware:
         network.hostname(str(int.from_bytes(machine.unique_id(), 'big', False))) # in case of multiple watches on same network
         Logger.log("Hostname: " + str(network.hostname()))
 
-        sensor_i2c = machine.SoftI2C(scl=machine.Pin(22, machine.Pin.OUT), sda=machine.Pin(21, machine.Pin.OUT))
+        sensor_i2c = machine.SoftI2C(scl=machine.Pin(22, machine.Pin.OUT), sda=machine.Pin(21, machine.Pin.OUT), freq=100000) #we dont need i2c very fast here and that can save us 0.6 ma on BMA423
         self.rtc = pcf8563.PCF8563(sensor_i2c)
 
         sObject_general = Single.Settings.getSettingObject(Single.Settings.general)
@@ -128,7 +128,7 @@ class Hardware:
         #acc_config = 0x17
         #self.bma.write_byte(bma423.BMA4_ACCEL_CONFIG_ADDR, acc_config)
         #print("int1 bma:", self.bma.read_byte(bma423.BMA4_INT1_IO_CTRL_ADDR))
-        self.bma.map_int(0, bma423.BMA423_WAKEUP_INT | bma423.BMA423_ANY_NO_MOTION_INT | bma423.BMA423_TILT_INT)
+        self.bma.map_int(0, bma423.BMA423_WAKEUP_INT | bma423.BMA423_ANY_NO_MOTION_INT)
         self.bma.map_int(1, 0)
         feat_data = self.bma.read_data(bma423.BMA4_FEATURE_CONFIG_ADDR, bma423.BMA423_FEATURE_SIZE)
         feat_data[bma423.BMA423_WAKEUP_OFFSET] = 0x03 # enable and sensitivity 2/7
@@ -141,7 +141,8 @@ class Hardware:
         self.imu_int1 = 0
         self.imu_int2 = 0
 
-        self.touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT)))
+        self.touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT), freq=100000))
+        self.touch.power_mode = 0
         # something is seriously wrong with gestures on this controller
         # we probably need to upload a firmware blob to the device and from looking at drivers, it is complicated and i dont want to bother
         self.irq_gesture_buffer_1 = bytearray(2)
@@ -180,6 +181,8 @@ class Hardware:
 
         self.vibrator = machine.Pin(4, machine.Pin.OUT)
 
+        machine.freq(80000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
+
 
     def get_battery_gauge(self): # 0-127
         return self.pmu.getBattPercentage()
@@ -209,13 +212,21 @@ class Hardware:
         self.pmu.clearIRQ()
         self.touch.power_mode = 1 # 0 = Active, 1 = Monitor, 2= Standby, 3= Hibernate
         #comes out of monitor whenever we touch
+        # power mode is NOT documented but this should work
+        # hibernation of FT6336 is up to 1.5 ma savings (active:4mA, monitor: 1.5mA, hibernate: 50 uA)
+        # except lilygo didnt connect the reset pin and we need it to restart the display
+        # monitor mode low rate of update good workaround?
         should_sleep = True
         while should_sleep:
+            self.touch.monitor_period = 254 # low refresh? Seems to work (datasheet says 25 time a second and default value is 40, i suppose that's milliseconds)
+            print(self.touch.monitor_period)
+            self.touch.power_mode = 1
             machine.lightsleep(time_ms)
             if callback != None:
                 should_sleep = callback()
             else:
                 should_sleep = False
+        self.touch.power_mode = 0
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         self.pmu.enablePower(axp202_constants.AXP202_LDO2)
         self.display.sleep_mode(False)
