@@ -130,7 +130,7 @@ class Kernel:
         for prog in to_stop:
             prog._do_stop() # when called from itself, the thread kills itself in there, and if that doesnt happen somehow it will die when returning anyway.
 
-    def switchProgram(self, id = -1): # switches back to 'last' program by DEFAULT_TEXT_COLOR
+    def switchProgram(self, id = -1): # switches back to 'last' program by default
         # todo add a thing to not switch away from keyboard
         self.running_front = id
         return True

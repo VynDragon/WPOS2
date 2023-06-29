@@ -11,6 +11,8 @@ import Events
 import esp, esp32
 import Single
 
+# Remember to write irq handlers for SPEED, we have SO MUCH RAM
+# also everything that has to do with hardware probably should be lbyl
 
 class Hardware:
     Vc3V3 = 2800 # we brownout often when disconnecting USB at lower voltages, workaround is resetting the device when USB disconnect
@@ -71,7 +73,7 @@ class Hardware:
             self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
         self.display.init()
         self.display.on()
-        self.display.fill(st7789.BLACK)
+        #self.display.fill(st7789.BLACK)
 
     def __init__(self):
         self.WatchVersion = 0 # V1
@@ -94,7 +96,7 @@ class Hardware:
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         '''very low 3.3v rail to minimize power consumption,
         esp can go down to 2.3v (and might be fine down to 1.8v too)
-        mpu/bma : 1.6v, typic:1.8v
+        imu/bma : 1.6v, typic:1.8v
         pmu:2.9v (but we dont care, this is the powersupply, this is how low the battery can go)
         display: 1.6v
         touch:2.7v but probably actually 1.8v
@@ -172,28 +174,28 @@ class Hardware:
         bouf = bytearray(1)  # reset bma for when we shut down without cutting power because for some reason it likes to lose its register when esp32 resets
         bouf[0] = 0xB6 #reset command
         sensor_i2c.writeto_mem(bma423.BMA4_I2C_ADDR_SECONDARY, bma423.BMA4_CMD_ADDR, bouf) # there is trace of this being previously done in the drivers but not anymore?
-        self.bma = bma423.BMA423(sensor_i2c) # re-initialize
-        self.bma.accel_range = 2
-        self.bma.advance_power_save = 0
-        #print("BMA internal status:", self.bma.read_byte(bma423.BMA4_INTERNAL_STAT))
-        #self.bma.feature_enable("wakeup")
-        #self.bma.feature_enable("any_motion")
-        #self.bma.feature_enable("tilt")
-        #int1config = self.bma.read_byte(bma423.BMA4_INT1_IO_CTRL_ADDR)
+        self.imu = bma423.BMA423(sensor_i2c) # re-initialize
+        self.imu.accel_range = bma423.BMA4_ACCEL_RANGE_8G # 4g ??
+        self.imu.advance_power_save = 0
+        #print("BMA internal status:", self.imu.read_byte(bma423.BMA4_INTERNAL_STAT))
+        #self.imu.feature_enable("wakeup")
+        #self.imu.feature_enable("any_motion")
+        #self.imu.feature_enable("tilt")
+        #int1config = self.imu.read_byte(bma423.BMA4_INT1_IO_CTRL_ADDR)
         int1config = 0b01010
-        self.bma.write_byte(bma423.BMA4_INT1_IO_CTRL_ADDR, int1config)
+        self.imu.write_byte(bma423.BMA4_INT1_IO_CTRL_ADDR, int1config)
         #acc_config = 0x17
-        #self.bma.write_byte(bma423.BMA4_ACCEL_CONFIG_ADDR, acc_config)
-        #print("int1 bma:", self.bma.read_byte(bma423.BMA4_INT1_IO_CTRL_ADDR))
-        self.bma.map_int(0, bma423.BMA423_WAKEUP_INT | bma423.BMA423_ANY_NO_MOTION_INT)
-        self.bma.map_int(1, 0)
-        feat_data = self.bma.read_data(bma423.BMA4_FEATURE_CONFIG_ADDR, bma423.BMA423_FEATURE_SIZE)
+        #self.imu.write_byte(bma423.BMA4_ACCEL_CONFIG_ADDR, acc_config)
+        #print("int1 imu:", self.imu.read_byte(bma423.BMA4_INT1_IO_CTRL_ADDR))
+        self.imu.map_int(0, bma423.BMA423_WAKEUP_INT | bma423.BMA423_ANY_NO_MOTION_INT)
+        self.imu.map_int(1, 0)
+        feat_data = self.imu.read_data(bma423.BMA4_FEATURE_CONFIG_ADDR, bma423.BMA423_FEATURE_SIZE)
         feat_data[bma423.BMA423_WAKEUP_OFFSET] = 0x03 # enable and sensitivity 2/7
-        self.bma.write_data(bma423.BMA4_FEATURE_CONFIG_ADDR, feat_data)
+        self.imu.write_data(bma423.BMA4_FEATURE_CONFIG_ADDR, feat_data)
         #print(list(feat_data))
-        self.bma.accel_enable = 1
-        #print(self.bma.int_status())
-        #print("BMA internal status:", self.bma.read_byte(bma423.BMA4_INTERNAL_STAT))
+        self.imu.accel_enable = 1
+        #print(self.imu.int_status())
+        #print("BMA internal status:", self.imu.read_byte(bma423.BMA4_INTERNAL_STAT))
 
         self.imu_int1 = 0
         self.imu_int2 = 0
@@ -245,6 +247,8 @@ class Hardware:
         return bool(self.pmu.isChargeing())
 
     def lightsleep(self, time_ms, force = False, callback = None):
+        if self.pmu.isVBUSPlug() and not force: # are we plugged in?
+            return False
         if self.wifi_lock.locked() and not force:
             return False
         elif self.wifi_lock.locked() and force:
@@ -348,7 +352,7 @@ class Hardware:
 
 
     def irq_imu(self, pin):
-        self.imu_int1, self.imu_int2 = Single.Hardware.bma.int_status()
+        self.imu_int1, self.imu_int2 = Single.Hardware.imu.int_status()
         micropython.schedule(self.irq_imu_process, pin)
 
     def irq_imu_process(self, pin):
@@ -381,8 +385,9 @@ class Hardware:
                 self.irq_touch_present = True
                 #self.irq_touch_fired_release = False
                 self.irq_touch_time = time.ticks_ms()
-            except OSError:
-                pass # that's a possibility on V2 because we cant check lock in irq without cause issues
+            except OSError as e:
+                if self.WatchVersion != 1:  # that's a possibility on V2 because we cant check lock in irq without causing issues so we do EAFP, since it's only a problem when going to sleep
+                    print(e)
             except Exception as e:
                 print("we shaint be there... And it's not okay, you might need to reboot(touch irq)")
                 print(e)

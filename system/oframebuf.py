@@ -93,6 +93,11 @@ class WPFrameBuffer(framebuf.FrameBuffer):
         self.update_max(x + w, y + h)
         super().rect(int(x * self.width), int(y * self.height), int(w * self.width), int(h * self.height), c, f)
 
+    def ellipse(self, x, y, w, h, c, f = False):
+        self.update_max(x, y)
+        self.update_max(x + w, y + h)
+        super().ellipse(int(x * self.width), int(y * self.height), int(w * self.width), int(h * self.height), c, f)
+
     def text(self, s, x, y, c):
         self.update_max(x, y)
         self.update_max(x + 8 * len(s), y+8)

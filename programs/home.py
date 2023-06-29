@@ -3,7 +3,7 @@ from system.Program import Program
 import PTRS
 import Events
 
-import time, ntptime
+import time, ntptime, math
 import led_32
 
 
@@ -39,11 +39,12 @@ class home(Program):
                 event = self.input.popleft()
                 self.sleep_counter = 0
                 if isinstance(event, Events.GestureEvent):
-                    if self.mode != 1 and event.gesture == 2: # todo: check if we are front app, if not, become it
+                    if self.mode != 1 and event.gesture == 2:
+                        switchProgram(self.id)
                         self.mode = 1
                     elif self.mode == 1 and event.gesture == 3:
                         self.mode = 0
-                        pass # todo: switch back to app if we werente front app
+                        switchProgram()
         except IndexError:
             self.sleep_counter += 1
         if self.sleep_counter > self.cycle_sleep:
@@ -73,6 +74,25 @@ class home(Program):
         return True
 
 
+    def rightometer(self, buff, px, py):
+        x, y, z = Single.Hardware.imu.read_accel()
+        buff.ellipse(px, py, 0.2, 0.2, Single.DEFAULT_OUTLINE_COLOR)
+        buff.ellipse(px, py, 0.05, 0.05, Single.DEFAULT_OUTLINE_COLOR)
+        # at 8g sensitivity '256 LSB/G', 1g = 9.80 m/s2, me thinks those are firmware dependant because i had to guess the right one
+        gx = y / 1024.0
+        gy = - x / 1024.0
+        bubblex = gx * 0.2
+        bubbley = gy * 0.2 # range 1 G
+        if abs(bubblex) > 0.2:
+            bubblex = ((bubblex > 0) - (bubblex < 0)) * 0.2
+        if abs(bubbley) > 0.2:
+            bubbley = ((bubbley > 0) - (bubbley < 0)) * 0.2
+        bubblex += px
+        bubbley += py
+        buff.ellipse(bubblex, bubbley, 0.04, 0.04, Single.DEFAULT_TEXT_COLOR, True)
+        buff.text("{:.3f} G (lateral)".format(math.sqrt(gx*gx+gy*gy)), 0.0, 1.0 - Single.DEFAULT_TEXT_RATIO_INV, Single.DEFAULT_TEXT_COLOR)
+
+
     @micropython.native
     def draw(self, buff):
         buff.fill(0)
@@ -93,7 +113,7 @@ class home(Program):
             else:
                 buff.text("-(= {}mV {}mA".format(int(self.percent), self.mv, self.ma), 0.0, 0.0, Single.DEFAULT_TEXT_COLOR)
             buff.hline(0.0, Single.DEFAULT_TEXT_RATIO_INV, 1.0, Single.DEFAULT_OUTLINE_COLOR)
-
+            self.rightometer(buff, 0.25, 0.75)
         if self.mode == 1:
             pass
 
