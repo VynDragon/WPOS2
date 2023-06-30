@@ -5,11 +5,16 @@
 
 import machine, micropython, json, time, _thread, network, os
 import Logger
-import st7789, axp202, axp202_constants, ft6x36, pcf8563, bma423
+import st7789, axp202, axp202_constants, ft6x36, pcf8563, bma423, adafruit_drv2605
 import TextMode
 import Events
 import esp, esp32
 import Single
+
+WATCHV1 = int(0)
+WATCHV2 = int(1)
+WATCHV3 = int(2)
+WATCHS3 = int(3)
 
 # Remember to write irq handlers for SPEED, we have SO MUCH RAM
 # also everything that has to do with hardware probably should be lbyl
@@ -23,23 +28,16 @@ class Hardware:
 
     def identify_version(self):
         try:
-            self.pmu.disablePower(axp202_constants.AXP202_LDO3)
-            touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT), freq=100000))
-            touch.power_mode = 0
-            return 0 #V1
+            drv_i2c = machine.SoftI2C(scl=machine.Pin(22, machine.Pin.OUT), sda=machine.Pin(21, machine.Pin.OUT), freq=100000)
+            vibration_controller = adafruit_drv2605.DRV2605(drv_i2c)
         except OSError:
-            pass
-        self.pmu.setLDO3Voltage(3300)
-        self.pmu.enablePower(axp202_constants.AXP202_LDO3)
-        self.pmu.disablePower(axp202_constants.AXP202_EXTEN); # reset touch
-        time.sleep_ms(10)
-        self.pmu.enablePower(axp202_constants.AXP202_EXTEN);
-        touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT), freq=100000))
-        touch.power_mode = 0
-        return 1 #V2
+            return WATCHV1
+        if "S3" in os.uname()[4]:
+            return WATCHS3 #S3
+        return WATCHV2 #V2
 
     def init_ft6336(self):
-        if self.WatchVersion == 1:
+        if self.WatchVersion == WATCHV2:
             self.pmu.disablePower(axp202_constants.AXP202_EXTEN); # reset touch
             time.sleep_ms(15)
             self.pmu.enablePower(axp202_constants.AXP202_EXTEN);
@@ -63,36 +61,37 @@ class Hardware:
         # shameful display of 3 wire SPI and slow updates
         # why not 2-line or 4-line  SPI lilygo?
         # also uses wrong MOSI pin, slowing it down even more, fixed on TWATCH S3
-        cs = machine.Pin(5, machine.Pin.OUT)
-        dc = machine.Pin(27, machine.Pin.OUT)
-        if self.WatchVersion == 1:
+        if self.WatchVersion == WATCHV2:
+            cs = machine.Pin(5, machine.Pin.OUT)
+            dc = machine.Pin(27, machine.Pin.OUT)
             display_spi = machine.SPI(1,baudrate=40000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
             self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(25, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+        elif self.WatchVersion == WATCHS3:
+            cs = machine.Pin(12, machine.Pin.OUT)
+            dc = machine.Pin(38, machine.Pin.OUT)
+            display_spi = machine.SPI(0,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
+            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(45, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
         else:
+            cs = machine.Pin(5, machine.Pin.OUT)
+            dc = machine.Pin(27, machine.Pin.OUT)
             display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
             self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
         self.display.init()
         self.display.on()
         #self.display.fill(st7789.BLACK)
+        Logger.log("Hi! Display initialized.")
 
-    def __init__(self):
-        self.WatchVersion = 0 # V1
-        self.hardware = []
+    def init_axp202(self):
+        Logger.log("Initializing AXP202 PMU...")
         sObject = Single.Settings.getSettingObject(Single.Settings.hardware)
         if sObject == None:
             sObject = {}
-        Logger.log("Initializing Hardware...")
-        machine.freq(240000000)
-
-
-        Logger.log("Initializing AXP202 PMU...")
-        # BackLight Poweif fb[i*2*DISPLAY_HEIGHT + j*2] > 0 or fb[i*2*DISPLAY_HEIGHT + j*2 + 1] > 0:r
         self.pmu = axp202.PMU()
-        self.pmu.enablePower(axp202.AXP202_LDO2)
         if sObject.get("BacklightVoltage") != None:
             self.pmu.setLDO2Voltage(sObject["BacklightVoltage"])
         else:
             self.pmu.setLDO2Voltage(2800) #default backlight level todo: load from settings (or load it from app 0)
+        self.pmu.enablePower(axp202_constants.AXP202_LDO2)
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         '''very low 3.3v rail to minimize power consumption,
         esp can go down to 2.3v (and might be fine down to 1.8v too)
@@ -105,7 +104,8 @@ class Hardware:
         mic: 1.6v
         psram: 2.7v :(
         '''
-        self.pmu.disablePower(axp202_constants.AXP202_LDO3) # on V2, Touch+ TFT
+        if self.WatchVersion != WATCHV2:
+            self.pmu.disablePower(axp202_constants.AXP202_LDO3) # on V2, Touch+ TFT
         self.pmu.disablePower(axp202_constants.AXP202_LDO4) # on V2, GPS
         self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
         self.pmu.clearIRQ()
@@ -121,23 +121,60 @@ class Hardware:
         #self.pmu.setlongPressTime(axp202_constants.AXP_LONGPRESS_TIME_2S)
         #self.pmu.setTimeOutShutdown(True)
         #self.pmu.enableIRQ(axp202_constants.AXP202_ALL_IRQ)
-
         self.pmu.setChargingTargetVoltage(axp202_constants.AXP202_TARGET_VOL_4_2V) # sane voltage values for battery management
+        if self.WatchVersion == WATCHV2:
+            self.pmu.setLDO3Voltage(3300)
+            self.pmu.enablePower(axp202_constants.AXP202_LDO3)
+            self.pmu.write_byte(axp202_constants.AXP202_GPIO0_CTL, 1) # everything to 0 except first byte, enable GPIO as high so it desinhibit DRV2605... why was this necessary, and only on V2 ?
+
+    def init_irq(self):
+        pin38 = machine.Pin(38, machine.Pin.IN) #irq touch
+        pin37 = machine.Pin(37, machine.Pin.IN) #irq external rtc
+        pin39 = machine.Pin(39, machine.Pin.IN) #irq IMU
+        pin35 = machine.Pin(35, machine.Pin.IN) #irq axp202
+        #esp32.wake_on_ext1((pin35, pin39, pin38, pin37), esp32.WAKEUP_ANY_HIGH)
+        #esp32.wake_on_ext0(pin35, esp32.WAKEUP_ALL_LOW)
+        pin35.irq(self.irq_pmu, trigger=machine.Pin.IRQ_FALLING, wake=machine.DEEPSLEEP | machine.SLEEP)
+        pin38.irq(self.irq_touch, trigger= machine.Pin.IRQ_RISING)
+        pin39.irq(self.irq_imu, trigger= machine.Pin.IRQ_RISING, wake=machine.DEEPSLEEP | machine.SLEEP)
+        #print("pin 39 is", pin39.value())
+
+        self.irq_touch_buffer_pos1 = bytearray(4) #pre-allocation
+        self.irq_touch_buffer_pos2 = bytearray(4)
+        self.irq_touch_present = False
+        #self.irq_touch_time = 0
+        #self.irq_touch_fired_release = True
+
+    def init_irq_s3(self):
+        pin16 = machine.Pin(16, machine.Pin.IN) #irq touch
+        pin17 = machine.Pin(17, machine.Pin.IN) #irq external rtc
+        pin14 = machine.Pin(14, machine.Pin.IN) #irq IMU
+        pin21 = machine.Pin(21, machine.Pin.IN) #irq axp2101
+        pin21.irq(self.irq_pmu, trigger=machine.Pin.IRQ_FALLING, wake=machine.DEEPSLEEP | machine.SLEEP)
+        pin16.irq(self.irq_touch, trigger= machine.Pin.IRQ_RISING)
+        pin14.irq(self.irq_imu, trigger= machine.Pin.IRQ_RISING, wake=machine.DEEPSLEEP | machine.SLEEP)
+
+        self.irq_touch_buffer_pos1 = bytearray(4) #pre-allocation
+        self.irq_touch_buffer_pos2 = bytearray(4)
+        self.irq_touch_present = False
+
+    def __init__(self):
+        self.WatchVersion = 0 # V1
+        self.hardware = []
+        Logger.log("Initializing Hardware...")
+        machine.freq(240000000)
 
         self.WatchVersion = self.identify_version()
         self.display_lock = _thread.allocate_lock() # for locking render while we sleep, notably on V2 watch where we need to re-initialize at wake up
         self.display_lock.acquire()
-
-        if self.WatchVersion == 1:
-            self.pmu.setLDO3Voltage(3300)
-            self.pmu.enablePower(axp202_constants.AXP202_LDO3)
-            time.sleep_ms(10)
-
-        Logger.log("Initializing firmware pre-init graphics.")
+        if self.WatchVersion < WATCHS3:
+            self.init_axp202()
+            time.sleep_ms(20)
+        else:
+            self.init_axp2101()
 
         self.init_st7789()
 
-        Logger.log("Hi! Display initialized.")
         Logger.log("CPU frequ: " + str(machine.freq()))
         Logger.log("Flash Size: " + str(esp.flash_size()))
         Logger.log("Unique ID: " + str(int.from_bytes(machine.unique_id(), 'big', False)))
@@ -204,29 +241,21 @@ class Hardware:
 
         self.gesture_startpos = (0,0) # gesture emulation
 
-        pin38 = machine.Pin(38, machine.Pin.IN) #irq touch
-        pin37 = machine.Pin(37, machine.Pin.IN) #irq external rtc
-        pin39 = machine.Pin(39, machine.Pin.IN) #irq IMU
-        pin35 = machine.Pin(35, machine.Pin.IN) #irq axp202
-        #esp32.wake_on_ext1((pin35, pin39, pin38, pin37), esp32.WAKEUP_ANY_HIGH)
-        #esp32.wake_on_ext0(pin35, esp32.WAKEUP_ALL_LOW)
-        pin35.irq(self.irq_pmu, trigger=machine.Pin.IRQ_FALLING, wake=machine.DEEPSLEEP | machine.SLEEP)
-        pin38.irq(self.irq_touch, trigger= machine.Pin.IRQ_RISING)
-        pin39.irq(self.irq_imu, trigger= machine.Pin.IRQ_RISING, wake=machine.DEEPSLEEP | machine.SLEEP)
-        #print("pin 39 is", pin39.value())
+        if self.WatchVersion < WATCHS3:
+            self.init_irq()
+        else:
+            self.init_irq_s3()
 
-        self.irq_touch_buffer_pos1 = bytearray(4) #pre-allocation
-        self.irq_touch_buffer_pos2 = bytearray(4)
-        self.irq_touch_present = False
-        #self.irq_touch_time = 0
-        #self.irq_touch_fired_release = True
-
-        #self.oldfb = bytearray(DISPLAY_WIDTH * DISPLAY_HEIGHT * 2)
 
         self.wifi_lock = _thread.allocate_lock()
         self.wifi = None
 
-        self.vibrator = machine.Pin(4, machine.Pin.OUT)
+        if self.WatchVersion == WATCHV1 or self.WatchVersion == WATCHV3:
+            self.vibrator = machine.Pin(4, machine.Pin.OUT)
+        else:
+            self.vibration_controller = adafruit_drv2605.DRV2605(sensor_i2c)
+            self.vibration_controller.mode = adafruit_drv2605.MODE_REALTIME # i really cant be bothered lol drv looks like it has nice functions but i have other priorities rn
+            self.vibrator = None
 
         machine.freq(80000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
         self.display_lock.release()
@@ -263,7 +292,8 @@ class Hardware:
         self.display.off()
         self.display.sleep_mode(True)
         self.pmu.disablePower(axp202_constants.AXP202_LDO2)
-        self.pmu.disablePower(axp202_constants.AXP202_LDO3) # shutdown full LCD in case of V2 watch
+        if self.WatchVersion == WATCHV2:
+            self.pmu.disablePower(axp202_constants.AXP202_LDO3) # shutdown full LCD in case of V2 watch
         self.pmu.disablePower(axp202_constants.AXP202_LDO4)
         self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
         self.pmu.clearIRQ()
@@ -275,7 +305,7 @@ class Hardware:
         # monitor mode low rate of update good workaround?
         should_sleep = True
         while should_sleep:
-            if self.WatchVersion == 0:
+            if self.WatchVersion == WATCHV1:
                 self.touch.monitor_period = 254 # low refresh? Seems to work (datasheet says 25 time a second and default value is 40, i suppose that's milliseconds)
                 self.touch.power_mode = 1
             machine.lightsleep(time_ms)
@@ -283,11 +313,11 @@ class Hardware:
                 should_sleep = callback()
             else:
                 should_sleep = False
-        if self.WatchVersion == 0:
+        if self.WatchVersion == WATCHV1:
             self.touch.power_mode = 0
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         self.pmu.enablePower(axp202_constants.AXP202_LDO2)
-        if self.WatchVersion == 1:
+        if self.WatchVersion == WATCHV2:
             self.pmu.setLDO3Voltage(3300)
             self.pmu.enablePower(axp202_constants.AXP202_LDO3)
             time.sleep_ms(20) # wait for potaaytoes to be warmed up
@@ -304,15 +334,24 @@ class Hardware:
         # seems like to get more speed would need to do quite a lot on the C side of things
 
     def feedback1(self):
-        self.vibrator.on()
+        if self.vibrator:
+            self.vibrator.on()
+        elif self.vibration_controller:
+            self.vibration_controller.realtime_value = 127
         machine.Timer(3, mode=machine.Timer.ONE_SHOT, period=20, callback=self.feedback_frame)
 
     def feedback2(self):
-        self.vibrator.on()
+        if self.vibrator:
+            self.vibrator.on()
+        elif self.vibration_controller:
+            self.vibration_controller.realtime_value = 127
         machine.Timer(3, mode=machine.Timer.ONE_SHOT, period=50, callback=self.feedback_frame)
 
     def feedback_frame(self, _):
-        self.vibrator.off()
+        if self.vibrator:
+            self.vibrator.off()
+        elif self.vibration_controller:
+            self.vibration_controller.realtime_value = 0
 
     def sync_ntp(self):
         try:
@@ -386,7 +425,7 @@ class Hardware:
                 #self.irq_touch_fired_release = False
                 self.irq_touch_time = time.ticks_ms()
             except OSError as e:
-                if self.WatchVersion != 1:  # that's a possibility on V2 because we cant check lock in irq without causing issues so we do EAFP, since it's only a problem when going to sleep
+                if self.WatchVersion != WATCHV2:  # that's a possibility on V2 because we cant check lock in irq without causing issues so we do EAFP, since it's only a problem when going to sleep
                     print(e)
             except Exception as e:
                 print("we shaint be there... And it's not okay, you might need to reboot(touch irq)")

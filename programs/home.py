@@ -40,11 +40,11 @@ class home(Program):
                 self.sleep_counter = 0
                 if isinstance(event, Events.GestureEvent):
                     if self.mode != 1 and event.gesture == 2:
-                        switchProgram(self.id)
+                        Single.Kernel.switchProgram(self.id)
                         self.mode = 1
                     elif self.mode == 1 and event.gesture == 3:
                         self.mode = 0
-                        switchProgram()
+                        Single.Kernel.switchProgram()
         except IndexError:
             self.sleep_counter += 1
         if self.sleep_counter > self.cycle_sleep:

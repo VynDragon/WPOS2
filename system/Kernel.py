@@ -132,8 +132,18 @@ class Kernel:
 
     def switchProgram(self, id = -1): # switches back to 'last' program by default
         # todo add a thing to not switch away from keyboard
-        self.running_front = id
-        return True
+        if id  == -1:
+            self.running_front = id
+            return True
+        self.running_lock.acquire()
+        if len(self.running) > 0:
+           for x in range(0, len(self.running)):
+               if self.running[x].id == id:
+                   self.running_lock.release()
+                   self.running_front = x
+                   return True
+        self.running_lock.release()
+        return False
 
 
 

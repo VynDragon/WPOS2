@@ -11,7 +11,11 @@
   - MicroPython Human Interface Device library
   - png 'Pure Python PNG Reader/Writer'
   - itertools.py (required by png)
-- Compiling with T-Watch board folder for MPY from this repository (not strictly necessary, but let you use the full esp's flash and sets options that might do something)
+  - DRV2605 driver from https://github.com/VynDragon/Adafruit_MicroPython_DRV2605
+  - axp2101 and i2cinterface files from lewis he at: https://github.com/lewisxhe/XPowersLib/tree/master/Micropython/src
+- Compiling with T-Watch board folder for MPY from this repository
+### YOU CAN ALSO USE THE MODULES.TAR.GZ FILE IN THIS REPOSITORY
+
 
 ## Installing:
 - Go to micropython folder from this repository and follow instructions
