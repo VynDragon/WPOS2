@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-import machine, micropython, json, time, _thread, network
+import machine, micropython, json, time, _thread, network, os
 import Logger
 import st7789, axp202, axp202_constants, ft6x36, pcf8563, bma423
 import TextMode
