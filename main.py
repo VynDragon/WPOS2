@@ -22,6 +22,7 @@ set_global_exception()  # Debug aid
 Single.Kernel = Kernel()  # Constructor might create tasks
 #Single.Kernel.kernel_main_thread()
 import _thread
+_thread.stack_size(Single.MP_THREAD_STACK_SIZE)
 _thread.start_new_thread(Single.Kernel.kernel_main_thread, ())
 #_thread.exit() # letting repl run seems to crash things when disconnecting USB?
 #my_class.run_forever()  # Non-terminating method

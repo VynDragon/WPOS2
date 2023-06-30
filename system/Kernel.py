@@ -74,6 +74,7 @@ class Kernel:
     def runProgram(self, name, arg):
         if __debug__:
             print("in runProgram for ", name)
+        _thread.stack_size(Single.MP_THREAD_STACK_SIZE) # do that before EVERY new thread, see Single.py for explanation
         _thread.start_new_thread(self.runProgram2, (name, arg))
 
 
@@ -173,8 +174,8 @@ class Kernel:
         try:
             Logger.addOutput(print)
             Logger.log("Welcome to WPOS2")
-            _thread.stack_size(64*1024)
-            Logger.log("Thread stack size is: " + str(_thread.stack_size()))
+            _thread.stack_size(Single.MP_THREAD_STACK_SIZE) # does not actually sets stack size
+            Logger.log("Thread stack size is: " + str(_thread.stack_size())) # because this sets it back to 4K
             Logger.process()
             Logger.log("Thread " + str(_thread.get_ident()) + " is Kernel Thread")
             Logger.log("with stack size: " +  str(_thread.stack_size()))
@@ -188,6 +189,7 @@ class Kernel:
             Single.Hardware = self.hardware
             self.framebuffer_array = bytearray(240 * 240 * 2) # 2 byte per pixel)
             self.framebuffer = oframebuf.WPFrameBuffer(self.framebuffer_array, 240, 240, framebuf.RGB565)
+            _thread.stack_size(Single.MP_THREAD_STACK_SIZE)
             _thread.start_new_thread(self.render_thread, ())
             self._lock.release()
             self.event(Events.RunEvent("home"))

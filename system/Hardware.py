@@ -5,7 +5,7 @@
 
 import machine, micropython, json, time, _thread, network, os
 import Logger
-import st7789, axp202, axp202_constants, ft6x36, pcf8563, bma423, adafruit_drv2605
+import st7789, axp202, axp202_constants, ft6x36, pcf8563, bma423, adafruit_drv2605, AXP2101
 import TextMode
 import Events
 import esp, esp32
@@ -64,7 +64,7 @@ class Hardware:
         if self.WatchVersion == WATCHV2:
             cs = machine.Pin(5, machine.Pin.OUT)
             dc = machine.Pin(27, machine.Pin.OUT)
-            display_spi = machine.SPI(1,baudrate=40000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
+            display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
             self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(25, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
         elif self.WatchVersion == WATCHS3:
             cs = machine.Pin(12, machine.Pin.OUT)
@@ -144,6 +144,7 @@ class Hardware:
         self.irq_touch_present = False
         #self.irq_touch_time = 0
         #self.irq_touch_fired_release = True
+        self.irq_feedback_present = False
 
     def init_irq_s3(self):
         pin16 = machine.Pin(16, machine.Pin.IN) #irq touch
@@ -157,6 +158,7 @@ class Hardware:
         self.irq_touch_buffer_pos1 = bytearray(4) #pre-allocation
         self.irq_touch_buffer_pos2 = bytearray(4)
         self.irq_touch_present = False
+        self.irq_feedback_present = False
 
     def __init__(self):
         self.WatchVersion = 0 # V1
@@ -254,7 +256,10 @@ class Hardware:
             self.vibrator = machine.Pin(4, machine.Pin.OUT)
         else:
             self.vibration_controller = adafruit_drv2605.DRV2605(sensor_i2c)
-            self.vibration_controller.mode = adafruit_drv2605.MODE_REALTIME # i really cant be bothered lol drv looks like it has nice functions but i have other priorities rn
+            self.vibration_controller._write_u8(0x01, 0b10000000) # reset
+            time.sleep_ms(10)
+            self.vibration_controller = adafruit_drv2605.DRV2605(sensor_i2c)
+            self.vibration_controller.mode = adafruit_drv2605.MODE_INTTRIG # i really cant be bothered lol drv looks like it has nice functions but i have other priorities rn
             self.vibrator = None
 
         machine.freq(80000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
@@ -293,7 +298,10 @@ class Hardware:
         self.display.sleep_mode(True)
         self.pmu.disablePower(axp202_constants.AXP202_LDO2)
         if self.WatchVersion == WATCHV2:
-            self.pmu.disablePower(axp202_constants.AXP202_LDO3) # shutdown full LCD in case of V2 watch
+            self.touch.power_mode = 3 # permannet sleep until reset
+            # self.pmu.disablePower(axp202_constants.AXP202_LDO3) # shutdown full LCD in case of V2 watch
+        if self.WatchVersion == WATCHV2 or self.WatchVersion == WATCHS3:
+            self.vibration_controller._write_u8(0x01, 0b01000000) # standby
         self.pmu.disablePower(axp202_constants.AXP202_LDO4)
         self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
         self.pmu.clearIRQ()
@@ -318,11 +326,16 @@ class Hardware:
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         self.pmu.enablePower(axp202_constants.AXP202_LDO2)
         if self.WatchVersion == WATCHV2:
-            self.pmu.setLDO3Voltage(3300)
-            self.pmu.enablePower(axp202_constants.AXP202_LDO3)
-            time.sleep_ms(20) # wait for potaaytoes to be warmed up
+            self.pmu.disablePower(axp202_constants.AXP202_EXTEN); # reset touch
+            time.sleep_ms(15)
+            self.pmu.enablePower(axp202_constants.AXP202_EXTEN);
+            # self.pmu.setLDO3Voltage(3300)
+            # self.pmu.enablePower(axp202_constants.AXP202_LDO3)
+            #time.sleep_ms(20) # wait for potaaytoes to be warmed up
             self.init_ft6336()
-            self.init_st7789()
+            #self.init_st7789()
+        if self.WatchVersion == WATCHV2 or self.WatchVersion == WATCHS3:
+            self.vibration_controller._write_u8(0x01, 0b00000000) #exit standby
         self.display.sleep_mode(False)
         self.display.on()
         machine.freq(80000000) # no more fast, todo: see other place where this is
@@ -333,25 +346,28 @@ class Hardware:
         self.display.blit_buffer(array, 0, 0, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT) # O(1) for the whole render pipeline with that, but quite slow... but not much more than even a simple direct draw
         # seems like to get more speed would need to do quite a lot on the C side of things
 
-    def feedback1(self):
+    def feedback1(self, _ = None):
         if self.vibrator:
             self.vibrator.on()
+            machine.Timer(-1, mode=machine.Timer.ONE_SHOT, period=20, callback=self.feedback_frame)
         elif self.vibration_controller:
-            self.vibration_controller.realtime_value = 127
-        machine.Timer(3, mode=machine.Timer.ONE_SHOT, period=20, callback=self.feedback_frame)
+            self.vibration_controller.sequence[0] = adafruit_drv2605.Effect(2)
+            self.vibration_controller.play()
 
-    def feedback2(self):
+
+
+
+    def feedback2(self, _ = None):
         if self.vibrator:
             self.vibrator.on()
+            machine.Timer(-1, mode=machine.Timer.ONE_SHOT, period=50, callback=self.feedback_frame)
         elif self.vibration_controller:
-            self.vibration_controller.realtime_value = 127
-        machine.Timer(3, mode=machine.Timer.ONE_SHOT, period=50, callback=self.feedback_frame)
+            self.vibration_controller.sequence[0] = adafruit_drv2605.Effect(1)
+            self.vibration_controller.play()
 
     def feedback_frame(self, _):
         if self.vibrator:
             self.vibrator.off()
-        elif self.vibration_controller:
-            self.vibration_controller.realtime_value = 0
 
     def sync_ntp(self):
         try:
@@ -459,6 +475,7 @@ class Hardware:
                 Single.Kernel.event(Events.GestureEvent(3))
 
             Single.Kernel.event(Events.ReleaseEvent(float(x) / float(Hardware.DISPLAY_WIDTH), float(y) / float(Hardware.DISPLAY_HEIGHT)))
+            #micropython.schedule(self.feedback1(), "bruh") # why? idk. It's giving recursion errors where it shouldnt
             self.feedback1()
 
     def fucky_wucky(self, e): # try to print exception to display
