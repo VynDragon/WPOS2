@@ -226,7 +226,7 @@ class Hardware:
         #acc_config = 0x17
         #self.imu.write_byte(bma423.BMA4_ACCEL_CONFIG_ADDR, acc_config)
         #print("int1 imu:", self.imu.read_byte(bma423.BMA4_INT1_IO_CTRL_ADDR))
-        self.imu.map_int(0, bma423.BMA423_WAKEUP_INT | bma423.BMA423_ANY_NO_MOTION_INT)
+        self.imu.map_int(0, bma423.BMA423_WAKEUP_INT)
         self.imu.map_int(1, 0)
         feat_data = self.imu.read_data(bma423.BMA4_FEATURE_CONFIG_ADDR, bma423.BMA423_FEATURE_SIZE)
         feat_data[bma423.BMA423_WAKEUP_OFFSET] = 0x03 # enable and sensitivity 2/7
@@ -254,6 +254,7 @@ class Hardware:
 
         if self.WatchVersion == WATCHV1 or self.WatchVersion == WATCHV3:
             self.vibrator = machine.Pin(4, machine.Pin.OUT)
+            self.vibration_controller = None
         else:
             self.vibration_controller = adafruit_drv2605.DRV2605(sensor_i2c)
             self.vibration_controller._write_u8(0x01, 0b10000000) # reset
@@ -349,23 +350,23 @@ class Hardware:
     def feedback1(self, _ = None):
         if self.vibrator:
             self.vibrator.on()
-            machine.Timer(-1, mode=machine.Timer.ONE_SHOT, period=20, callback=self.feedback_frame)
+            _thread.stack_size(64) # just a small thread bro i swear it's my last one bro
+            _thread.start_new_thread(self.feedback_frame, (20,))
         elif self.vibration_controller:
             self.vibration_controller.sequence[0] = adafruit_drv2605.Effect(2)
             self.vibration_controller.play()
 
-
-
-
     def feedback2(self, _ = None):
         if self.vibrator:
             self.vibrator.on()
-            machine.Timer(-1, mode=machine.Timer.ONE_SHOT, period=50, callback=self.feedback_frame)
+            _thread.stack_size(64)
+            _thread.start_new_thread(self.feedback_frame, (50,))
         elif self.vibration_controller:
             self.vibration_controller.sequence[0] = adafruit_drv2605.Effect(1)
             self.vibration_controller.play()
 
-    def feedback_frame(self, _):
+    def feedback_frame(self, tm):
+        time.sleep_ms(tm)
         if self.vibrator:
             self.vibrator.off()
 
@@ -475,7 +476,6 @@ class Hardware:
                 Single.Kernel.event(Events.GestureEvent(3))
 
             Single.Kernel.event(Events.ReleaseEvent(float(x) / float(Hardware.DISPLAY_WIDTH), float(y) / float(Hardware.DISPLAY_HEIGHT)))
-            #micropython.schedule(self.feedback1(), "bruh") # why? idk. It's giving recursion errors where it shouldnt
             self.feedback1()
 
     def fucky_wucky(self, e): # try to print exception to display

@@ -178,7 +178,8 @@ class Kernel:
             Logger.log("Thread stack size is: " + str(_thread.stack_size())) # because this sets it back to 4K
             Logger.process()
             Logger.log("Thread " + str(_thread.get_ident()) + " is Kernel Thread")
-            Logger.log("with stack size: " +  str(_thread.stack_size()))
+            _thread.stack_size(Single.MP_THREAD_STACK_SIZE)
+            Logger.log("with stack size: " +  str(_thread.stack_size())) # same deal
             self.kernel_thread = _thread.get_ident()
             Logger.log("Hardware thread: " + str(checkHardwareThread()))
             if not self._lock.acquire():
