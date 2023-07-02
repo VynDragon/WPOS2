@@ -21,27 +21,34 @@ WATCHS3 = int(3)
 
 class Hardware:
     Vc3V3 = 2800 # we brownout often when disconnecting USB at lower voltages, workaround is resetting the device when USB disconnect
+    Vc3V3S3 = 3300
     #Vc3V3 = 3300
     DISPLAY_WIDTH = 240
     DISPLAY_HEIGHT = 240
     #RELEASE_TWITCHYNESS = 100 dont need anymore since we figured the touchscreen already does that, contrary to our driver
 
     def identify_version(self):
+        if "S3" in os.uname()[4]:
+            return WATCHS3 #S3
         try:
             drv_i2c = machine.SoftI2C(scl=machine.Pin(22, machine.Pin.OUT), sda=machine.Pin(21, machine.Pin.OUT), freq=100000)
             vibration_controller = adafruit_drv2605.DRV2605(drv_i2c)
         except OSError:
             return WATCHV1
-        if "S3" in os.uname()[4]:
-            return WATCHS3 #S3
         return WATCHV2 #V2
 
     def init_ft6336(self):
         if self.WatchVersion == WATCHV2:
-            self.pmu.disablePower(axp202_constants.AXP202_EXTEN); # reset touch
+            self.pmu.disablePower(axp202_constants.AXP202_EXTEN) # reset touch
             time.sleep_ms(15)
-            self.pmu.enablePower(axp202_constants.AXP202_EXTEN);
-        self.touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT), freq=100000))
+            self.pmu.enablePower(axp202_constants.AXP202_EXTEN)
+        elif self.WatchVersion == WATCHS3:
+            pass # we do in axp2101
+        time.sleep_ms(15)
+        if self.WatchVersion == WATCHS3:
+            self.touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(40, machine.Pin.OUT), sda=machine.Pin(39, machine.Pin.OUT), freq=100000))
+        else:
+            self.touch = ft6x36.FT6x36(machine.SoftI2C(scl=machine.Pin(32, machine.Pin.OUT), sda=machine.Pin(23, machine.Pin.OUT), freq=100000))
         self.touch.power_mode = 0
         # something is seriously wrong with gestures on this controller
         # we probably need to upload a firmware blob to the device and from looking at drivers, it is complicated and i dont want to bother
@@ -56,8 +63,14 @@ class Hardware:
         self.touch._i2c.writeto_mem(self.touch._address, 0x95, tmpbuff)'''
 
     def init_st7789(self):
-        display_spi = machine.SPI(1)
-        display_spi.deinit()
+        if self.WatchVersion != WATCHS3:
+            display_spi = machine.SPI(1)
+            display_spi.deinit()
+        else:
+            #display_spi = machine.SPI(2) # deinitting esp32S3 makes it angry
+            #display_spi.deinit()
+            pass
+
         # shameful display of 3 wire SPI and slow updates
         # why not 2-line or 4-line  SPI lilygo?
         # also uses wrong MOSI pin, slowing it down even more, fixed on TWATCH S3
@@ -69,8 +82,11 @@ class Hardware:
         elif self.WatchVersion == WATCHS3:
             cs = machine.Pin(12, machine.Pin.OUT)
             dc = machine.Pin(38, machine.Pin.OUT)
-            display_spi = machine.SPI(0,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
+            print("csdc")
+            display_spi = machine.SPI(2,baudrate=27000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT))
+            print("init spi 2")
             self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(45, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+            print("st7789 init good")
         else:
             cs = machine.Pin(5, machine.Pin.OUT)
             dc = machine.Pin(27, machine.Pin.OUT)
@@ -88,7 +104,10 @@ class Hardware:
             sObject = {}
         self.pmu = axp202.PMU()
         if sObject.get("BacklightVoltage") != None:
-            self.pmu.setLDO2Voltage(sObject["BacklightVoltage"])
+            if sObject["BacklightVoltage"] > 2600 and sObject["BacklightVoltage"] <= 3300:
+                self.pmu.setLDO2Voltage(sObject["BacklightVoltage"])
+            else:
+                self.pmu.setLDO2Voltage(2800)
         else:
             self.pmu.setLDO2Voltage(2800) #default backlight level todo: load from settings (or load it from app 0)
         self.pmu.enablePower(axp202_constants.AXP202_LDO2)
@@ -126,6 +145,78 @@ class Hardware:
             self.pmu.setLDO3Voltage(3300)
             self.pmu.enablePower(axp202_constants.AXP202_LDO3)
             self.pmu.write_byte(axp202_constants.AXP202_GPIO0_CTL, 1) # everything to 0 except first byte, enable GPIO as high so it desinhibit DRV2605... why was this necessary, and only on V2 ?
+
+    def init_axp2101(self, sensors_i2c):
+        Logger.log("Initializing AXP2101 PMU...")
+        sObject = Single.Settings.getSettingObject(Single.Settings.hardware)
+        if sObject == None:
+            sObject = {}
+        self.pmu = AXP2101.AXP2101(sensors_i2c)
+        self.pmu.disableALDO2()
+
+        self.pmu.setVbusVoltageLimit(self.pmu.XPOWERS_AXP2101_VBUS_VOL_LIM_4V36)
+        self.pmu.setVbusCurrentLimit(self.pmu.XPOWERS_AXP2101_VBUS_CUR_LIM_100MA) # would've liked to set that to 150 but next step is 500mA
+        self.pmu.setSysPowerDownVoltage(2600)
+        self.pmu.setDC1Voltage(Hardware.Vc3V3S3)
+        self.pmu.setALDO1Voltage(3100) # backup battery voltage should be 3.1 (MS412FE max charge voltage is '3.3(3.1)')
+        self.pmu.setALDO3Voltage(3300) # touch 3v3
+        self.pmu.setALDO4Voltage(3300); # sx1262
+        self.pmu.setBLDO2Voltage(3300); # drv2605
+        # THEY TIED THE BACKLIGHT VOLTAGE TO THE DISPLAY VOLTAGE
+        if sObject.get("BacklightVoltage") != None:
+            if sObject["BacklightVoltage"] > 2600 and sObject["BacklightVoltage"] <= 3300:
+                self.pmu.setALDO2Voltage(sObject["BacklightVoltage"])
+            else:
+                self.pmu.setALDO2Voltage(3300)
+        else:
+            self.pmu.setALDO2Voltage(3300) #default backlight level todo: load from settings (or load it from app 0)
+
+        self.pmu.disableDC2()
+        self.pmu.disableDC3()
+        self.pmu.disableDC4()
+        self.pmu.disableDC5() # this is actually the touch reset pin
+        self.pmu.disableBLDO1()
+        self.pmu.disableCPUSLDO()
+        self.pmu.disableDLDO1()
+        self.pmu.disableDLDO2()
+
+        self.pmu.enableALDO1()# RTC VBAT
+        self.pmu.enableALDO2()# TFT and BACKLIGHT   VDD
+        self.pmu.enableALDO3()# Screen touch VDD
+        self.pmu.enableALDO4()# Radio VDD
+        self.pmu.enableBLDO2()# drv2605 enable
+
+        self.pmu.setPowerKeyPressOffTime(self.pmu.XPOWERS_POWEROFF_6S)
+        self.pmu.setPowerKeyPressOnTime(self.pmu.XPOWERS_POWERON_1S)
+
+        self.pmu.disableTSPinMeasure() # no temperature pin
+
+        self.pmu.enableBattDetection() # adcs
+        self.pmu.enableVbusVoltageMeasure()
+        self.pmu.enableBattVoltageMeasure()
+        self.pmu.enableSystemVoltageMeasure()
+
+        self.pmu.setChargingLedMode(self.pmu.XPOWERS_CHG_LED_OFF) # no chg led
+
+        self.pmu.clearIrqStatus()
+        self.pmu.disableIRQ(self.pmu.XPOWERS_AXP2101_ALL_IRQ) # irqs
+
+        self.pmu.enableIRQ(self.pmu.XPOWERS_AXP2101_BAT_INSERT_IRQ | self.pmu.XPOWERS_AXP2101_BAT_REMOVE_IRQ |
+                           self.pmu.XPOWERS_AXP2101_VBUS_REMOVE_IRQ  | self.pmu.XPOWERS_AXP2101_PKEY_SHORT_IRQ |
+                           self.pmu.XPOWERS_AXP2101_PKEY_LONG_IRQ)
+
+        self.pmu.setPrechargeCurr(self.pmu.XPOWERS_AXP2101_PRECHARGE_50MA)
+        self.pmu.setChargerConstantCurr(self.pmu.XPOWERS_AXP2101_CHG_CUR_100MA)
+        self.pmu.setChargerTerminationCurr(self.pmu.XPOWERS_AXP2101_CHG_ITERM_25MA)
+        self.pmu.setChargeTargetVoltage(self.pmu.XPOWERS_AXP2101_CHG_VOL_4V2)
+        self.pmu.enableButtonBatteryCharge()
+
+        # seems LDO2/DCDC5 is tied to RST
+        self.pmu.disableDC5() # reset touch
+        time.sleep_ms(15)
+        self.pmu.setDC5Voltage(3300)
+        self.pmu.enableDC5()
+
 
     def init_irq(self):
         pin38 = machine.Pin(38, machine.Pin.IN) #irq touch
@@ -169,13 +260,26 @@ class Hardware:
         self.WatchVersion = self.identify_version()
         self.display_lock = _thread.allocate_lock() # for locking render while we sleep, notably on V2 watch where we need to re-initialize at wake up
         self.display_lock.acquire()
+
+        sensor_i2c = None
+        if self.WatchVersion < WATCHS3:
+            sensor_i2c = machine.SoftI2C(scl=machine.Pin(22, machine.Pin.OUT), sda=machine.Pin(21, machine.Pin.OUT), freq=100000) #we dont need i2c very fast here and that can save us 0.6 ma on BMA423
+        else:
+            sensor_i2c = machine.SoftI2C(scl=machine.Pin(11, machine.Pin.OUT), sda=machine.Pin(10, machine.Pin.OUT), freq=100000)
+
         if self.WatchVersion < WATCHS3:
             self.init_axp202()
             time.sleep_ms(20)
         else:
-            self.init_axp2101()
+            self.init_axp2101(sensor_i2c)
+            time.sleep_ms(20)
+
+        print("AXP2101 good")
+
+
 
         self.init_st7789()
+        print("st7789 good")
 
         Logger.log("CPU frequ: " + str(machine.freq()))
         Logger.log("Flash Size: " + str(esp.flash_size()))
@@ -185,8 +289,9 @@ class Hardware:
         network.hostname(str(int.from_bytes(machine.unique_id(), 'big', False))) # in case of multiple watches on same network
         Logger.log("Hostname: " + str(network.hostname()))
 
-        sensor_i2c = machine.SoftI2C(scl=machine.Pin(22, machine.Pin.OUT), sda=machine.Pin(21, machine.Pin.OUT), freq=100000) #we dont need i2c very fast here and that can save us 0.6 ma on BMA423
+
         self.rtc = pcf8563.PCF8563(sensor_i2c)
+        print("pcf8563 good")
 
         sObject_general = Single.Settings.getSettingObject(Single.Settings.general)
         if sObject_general == None:
@@ -205,6 +310,14 @@ class Hardware:
                 day -= 31
             if weekday > 6:
                 weekday -= 7
+        if gmt < 0:
+            day -= 1
+            weekday -= 1
+            gmt += 24
+            if day < 1:
+                day += 31
+            if weekday < 0:
+                weekday += 7
         dtt = (self.rtc.year()+2000, self.rtc.month(), day, weekday, gmt, self.rtc.minutes(), self.rtc.seconds(), 0)
         machine.RTC().datetime(dtt)
         Logger.log("Time: " + str(machine.RTC().datetime()))
@@ -213,6 +326,7 @@ class Hardware:
         bouf = bytearray(1)  # reset bma for when we shut down without cutting power because for some reason it likes to lose its register when esp32 resets
         bouf[0] = 0xB6 #reset command
         sensor_i2c.writeto_mem(bma423.BMA4_I2C_ADDR_SECONDARY, bma423.BMA4_CMD_ADDR, bouf) # there is trace of this being previously done in the drivers but not anymore?
+        time.sleep_ms(5)
         self.imu = bma423.BMA423(sensor_i2c) # re-initialize
         self.imu.accel_range = bma423.BMA4_ACCEL_RANGE_8G # 4g ??
         self.imu.advance_power_save = 0
@@ -235,11 +349,12 @@ class Hardware:
         self.imu.accel_enable = 1
         #print(self.imu.int_status())
         #print("BMA internal status:", self.imu.read_byte(bma423.BMA4_INTERNAL_STAT))
-
+        print("bma423 good")
         self.imu_int1 = 0
         self.imu_int2 = 0
 
         self.init_ft6336()
+        print("ft6336 good")
 
         self.gesture_startpos = (0,0) # gesture emulation
 
@@ -262,6 +377,7 @@ class Hardware:
             self.vibration_controller = adafruit_drv2605.DRV2605(sensor_i2c)
             self.vibration_controller.mode = adafruit_drv2605.MODE_INTTRIG # i really cant be bothered lol drv looks like it has nice functions but i have other priorities rn
             self.vibrator = None
+            print("adafruit_drv2605 good")
 
         machine.freq(80000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
         self.display_lock.release()
@@ -365,8 +481,9 @@ class Hardware:
             self.vibration_controller.sequence[0] = adafruit_drv2605.Effect(1)
             self.vibration_controller.play()
 
-    def feedback_frame(self, tm):
-        time.sleep_ms(tm)
+    def feedback_frame(self, tm = 0):
+        if tm > 0:
+            time.sleep_ms(tm)
         if self.vibrator:
             self.vibrator.off()
 
@@ -390,6 +507,14 @@ class Hardware:
                     day -= 31
                 if weekday > 6:
                     weekday -= 7
+            if gmt < 0:
+                day -= 1
+                weekday -= 1
+                gmt += 24
+                if day < 1:
+                    day += 31
+                if weekday < 0:
+                    weekday += 7
             machine.RTC().datetime((ct[0], ct[1], day, ct[6] + 1, gmt, ct[4], ct[5], 0))
         except:
             return False
@@ -397,7 +522,7 @@ class Hardware:
 
 
     def process(self):
-        pass
+        self.feedback_frame() # sometimes that falls over itself so here's a workaround
        # if not self.irq_touch_present and self.irq_touch_time + self.RELEASE_TWITCHYNESS < time.ticks_ms() and not self.irq_touch_fired_release:
        #     x = (self.irq_touch_buffer_pos1[0] << 8 | self.irq_touch_buffer_pos1[1]) & 0x0FFF
        #     y = (self.irq_touch_buffer_pos1[2] << 8 | self.irq_touch_buffer_pos1[3]) & 0x0FFF

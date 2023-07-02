@@ -79,8 +79,14 @@ class home(Program):
         buff.ellipse(px, py, 0.2, 0.2, Single.DEFAULT_OUTLINE_COLOR)
         buff.ellipse(px, py, 0.05, 0.05, Single.DEFAULT_OUTLINE_COLOR)
         # at 8g sensitivity '256 LSB/G', 1g = 9.80 m/s2, me thinks those are firmware dependant because i had to guess the right one
-        gx = y / 1024.0
-        gy = - x / 1024.0
+        gx = 0
+        gy = 0
+        if Single.Hardware.WatchVersion == 1:
+            gx = y / 1024.0
+            gy = - x / 1024.0
+        elif Single.Hardware.WatchVersion == 0:
+            gx = - x / 1024.0
+            gy = - y / 1024.0
         bubblex = gx * 0.2
         bubbley = gy * 0.2 # range 1 G
         if abs(bubblex) > 0.2:

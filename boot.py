@@ -3,7 +3,7 @@
 #esp.osdebug(None)
 #import webrepl
 #webrepl.start()
-import micropython, machine, esp
+import micropython, esp
 micropython.alloc_emergency_exception_buf(100)
 micropython.opt_level(3)
 esp.osdebug(None)

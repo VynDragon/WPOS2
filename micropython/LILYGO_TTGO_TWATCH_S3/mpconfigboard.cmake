@@ -6,5 +6,6 @@ set(SDKCONFIG_DEFAULTS
     boards/sdkconfig.ble
     boards/sdkconfig.240mhz
     boards/sdkconfig.spiram_sx
+    boards/sdkconfig.spiram_oct
     boards/LILYGO_TTGO_TWATCH_S3/sdkconfig.board
 )

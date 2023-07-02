@@ -36,3 +36,6 @@ T-Watch 2020 V1 uses about 1.6ma in light sleep with current code
 
 
 Currently Only T-Watch V1 and T-Watch V2 have been tested, I do not own any V3.
+
+
+There is something going on with SPI and ESP32S3 version, it's not working for me with ESP-IDF 4.4 and mpy 1.20.0 or mpy master and esp-idf 5.1
