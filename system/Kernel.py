@@ -190,8 +190,8 @@ class Kernel:
             Single.Hardware = self.hardware
             self.framebuffer_array = bytearray(240 * 240 * 2) # 2 byte per pixel)
             self.framebuffer = oframebuf.WPFrameBuffer(self.framebuffer_array, 240, 240, framebuf.RGB565)
-            _thread.stack_size(Single.MP_THREAD_STACK_SIZE)
-            _thread.start_new_thread(self.render_thread, ())
+            #_thread.stack_size(Single.MP_THREAD_STACK_SIZE)
+            #_thread.start_new_thread(self.render_thread, ())
             self._lock.release()
             self.event(Events.RunEvent("home"))
             while(True):

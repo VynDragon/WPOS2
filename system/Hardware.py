@@ -83,7 +83,8 @@ class Hardware:
             cs = machine.Pin(12, machine.Pin.OUT)
             dc = machine.Pin(38, machine.Pin.OUT)
             print("csdc")
-            display_spi = machine.SPI(2,baudrate=27000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT))
+            display_spi = machine.SoftSPI(baudrate=800000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT), miso=machine.Pin(9))
+            #display_spi = machine.SPI(2, baudrate=40000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT))
             print("init spi 2")
             self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(45, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
             print("st7789 init good")
@@ -159,10 +160,9 @@ class Hardware:
         self.pmu.setSysPowerDownVoltage(2600)
         self.pmu.setDC1Voltage(Hardware.Vc3V3S3)
         self.pmu.setALDO1Voltage(3100) # backup battery voltage should be 3.1 (MS412FE max charge voltage is '3.3(3.1)')
-        self.pmu.setALDO3Voltage(3300) # touch 3v3
+        self.pmu.setALDO3Voltage(3300) # and display touch 3v3
         self.pmu.setALDO4Voltage(3300); # sx1262
         self.pmu.setBLDO2Voltage(3300); # drv2605
-        # THEY TIED THE BACKLIGHT VOLTAGE TO THE DISPLAY VOLTAGE
         if sObject.get("BacklightVoltage") != None:
             if sObject["BacklightVoltage"] > 2600 and sObject["BacklightVoltage"] <= 3300:
                 self.pmu.setALDO2Voltage(sObject["BacklightVoltage"])
@@ -198,12 +198,12 @@ class Hardware:
 
         self.pmu.setChargingLedMode(self.pmu.XPOWERS_CHG_LED_OFF) # no chg led
 
-        self.pmu.clearIrqStatus()
         self.pmu.disableIRQ(self.pmu.XPOWERS_AXP2101_ALL_IRQ) # irqs
 
         self.pmu.enableIRQ(self.pmu.XPOWERS_AXP2101_BAT_INSERT_IRQ | self.pmu.XPOWERS_AXP2101_BAT_REMOVE_IRQ |
                            self.pmu.XPOWERS_AXP2101_VBUS_REMOVE_IRQ  | self.pmu.XPOWERS_AXP2101_PKEY_SHORT_IRQ |
-                           self.pmu.XPOWERS_AXP2101_PKEY_LONG_IRQ)
+                           self.pmu.XPOWERS_AXP2101_PKEY_LONG_IRQ, __debug__)
+        self.pmu.clearIrqStatus()
 
         self.pmu.setPrechargeCurr(self.pmu.XPOWERS_AXP2101_PRECHARGE_50MA)
         self.pmu.setChargerConstantCurr(self.pmu.XPOWERS_AXP2101_CHG_CUR_100MA)
@@ -241,7 +241,8 @@ class Hardware:
         pin16 = machine.Pin(16, machine.Pin.IN) #irq touch
         pin17 = machine.Pin(17, machine.Pin.IN) #irq external rtc
         pin14 = machine.Pin(14, machine.Pin.IN) #irq IMU
-        pin21 = machine.Pin(21, machine.Pin.IN) #irq axp2101
+        pin21 = machine.Pin(21, machine.Pin.IN, machine.Pin.PULL_UP) #irq axp2101, seems 1.8v of pullup behind a 47k resistor wasnt enough
+        print("axp irq value:", pin21.value())
         pin21.irq(self.irq_pmu, trigger=machine.Pin.IRQ_FALLING, wake=machine.DEEPSLEEP | machine.SLEEP)
         pin16.irq(self.irq_touch, trigger= machine.Pin.IRQ_RISING)
         pin14.irq(self.irq_imu, trigger= machine.Pin.IRQ_RISING, wake=machine.DEEPSLEEP | machine.SLEEP)
@@ -358,10 +359,13 @@ class Hardware:
 
         self.gesture_startpos = (0,0) # gesture emulation
 
-        if self.WatchVersion < WATCHS3:
-            self.init_irq()
-        else:
+        if self.WatchVersion == WATCHS3:
             self.init_irq_s3()
+        else:
+            self.init_irq()
+
+        state = machine.disable_irq()
+        machine.enable_irq(state)
 
 
         self.wifi_lock = _thread.allocate_lock()
@@ -384,22 +388,35 @@ class Hardware:
 
 
     def get_battery_gauge(self): # 0-127
+        if self.WatchVersion == WATCHS3:
+            return self.pmu.getBatteryPercent
         return self.pmu.getBattPercentage()
 
     def get_battery_voltage(self):
+        if self.WatchVersion == WATCHS3:
+            self.pmu.enableBattVoltageMeasure()
+            return self.pmu.getBattVoltage()
         self.pmu.enableADC(1, 7)
         return self.pmu.getBattVoltage()
 
     def get_battery_current(self):
+        if self.WatchVersion == WATCHS3:
+            return 0
         self.pmu.enableADC(1, 6)
         return self.pmu.getBattDischargeCurrent()
 
     def charging(self):
+        if self.WatchVersion == WATCHS3:
+            return bool(self.pmu.isCharging())
         return bool(self.pmu.isChargeing())
 
     def lightsleep(self, time_ms, force = False, callback = None):
-        if self.pmu.isVBUSPlug() and not force: # are we plugged in?
-            return False
+        if self.WatchVersion == WATCHS3:
+            if self.pmu.isVbusIn() and not force:
+                return False
+        else:
+            if self.pmu.isVBUSPlug() and not force: # are we plugged in?
+                return False
         if self.wifi_lock.locked() and not force:
             return False
         elif self.wifi_lock.locked() and force:
@@ -544,8 +561,17 @@ class Hardware:
         micropython.schedule(self.irq_pmu_process, pin)
 
     def irq_pmu_process(self, pin):
+        if self.WatchVersion == WATCHS3:
+            self.pmu.getIrqStatus()
+            if self.pmu.isVbusRemoveIrq(): #workaround for brownouts and other bugs when disconnect USB
+                machine.reset()
+            if self.pmu.isPekeyShortPressIrq():
+                Single.Kernel.event(Events.PhysButtonEvent(0))
+            if self.pmu.isPekeyLongPressIrq():
+                Single.Kernel.event(Events.PhysButtonEvent(1.5))
+            self.pmu.clearIrqStatus()
+            return
         self.pmu.readIRQ()
-        print("irq_pmu:", list(self.pmu.irqbuf))
         if self.pmu.irqbuf[0] & axp202_constants.AXP202_VBUS_REMOVED_IRQ > 0: #workaround for brownouts and other bugs when disconnect USB
             machine.reset()
         if self.pmu.irqbuf[2] & axp202_constants.AXP202_VBUS_REMOVED_IRQ > 0: #actually AXP202_PEK_SHORTPRESS_IRQ!
