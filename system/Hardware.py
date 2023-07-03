@@ -26,6 +26,7 @@ class Hardware:
     DISPLAY_WIDTH = 240
     DISPLAY_HEIGHT = 240
     #RELEASE_TWITCHYNESS = 100 dont need anymore since we figured the touchscreen already does that, contrary to our driver
+    BACKLIGHT_PWM_DEFAULT = int(8192)
 
     def identify_version(self):
         if "S3" in os.uname()[4]:
@@ -71,28 +72,27 @@ class Hardware:
             #display_spi.deinit()
             pass
 
-        # shameful display of 3 wire SPI and slow updates
-        # why not 2-line or 4-line  SPI lilygo?
-        # also uses wrong MOSI pin, slowing it down even more, fixed on TWATCH S3
+        # uses wrong MOSI pin, slowing it down even more, fixed on TWATCH S3
         if self.WatchVersion == WATCHV2:
             cs = machine.Pin(5, machine.Pin.OUT)
             dc = machine.Pin(27, machine.Pin.OUT)
             display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
-            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(25, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+            #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(25, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
         elif self.WatchVersion == WATCHS3:
             cs = machine.Pin(12, machine.Pin.OUT)
             dc = machine.Pin(38, machine.Pin.OUT)
-            print("csdc")
-            display_spi = machine.SoftSPI(baudrate=800000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT), miso=machine.Pin(9))
-            #display_spi = machine.SPI(2, baudrate=40000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT))
-            print("init spi 2")
-            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(45, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
-            print("st7789 init good")
+            display_spi = machine.SoftSPI(baudrate=800000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT), miso=machine.Pin(9)) # still init as softSPI, if you REALLY need to write to the screen you can force it to refresh (it will take ages and the other programs will be unhappy)
+            machine.Pin(9, machine.Pin.IN) # we dont actually want to write to pin 9, it's sx1262's, but softspi insists on a miso
+            #display_spi = machine.SPI(2, baudrate=40000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT)) # SPI broken for me, see https://github.com/micropython/micropython/issues/11918
+            #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(45, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
         else:
             cs = machine.Pin(5, machine.Pin.OUT)
             dc = machine.Pin(27, machine.Pin.OUT)
             display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
-            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+            #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
         self.display.init()
         self.display.on()
         #self.display.fill(st7789.BLACK)
@@ -100,17 +100,9 @@ class Hardware:
 
     def init_axp202(self):
         Logger.log("Initializing AXP202 PMU...")
-        sObject = Single.Settings.getSettingObject(Single.Settings.hardware)
-        if sObject == None:
-            sObject = {}
+
         self.pmu = axp202.PMU()
-        if sObject.get("BacklightVoltage") != None:
-            if sObject["BacklightVoltage"] > 2600 and sObject["BacklightVoltage"] <= 3300:
-                self.pmu.setLDO2Voltage(sObject["BacklightVoltage"])
-            else:
-                self.pmu.setLDO2Voltage(2800)
-        else:
-            self.pmu.setLDO2Voltage(2800) #default backlight level todo: load from settings (or load it from app 0)
+        self.pmu.setLDO2Voltage(3300) #backlight
         self.pmu.enablePower(axp202_constants.AXP202_LDO2)
         self.pmu.setDC3Voltage(Hardware.Vc3V3)
         '''very low 3.3v rail to minimize power consumption,
@@ -149,9 +141,6 @@ class Hardware:
 
     def init_axp2101(self, sensors_i2c):
         Logger.log("Initializing AXP2101 PMU...")
-        sObject = Single.Settings.getSettingObject(Single.Settings.hardware)
-        if sObject == None:
-            sObject = {}
         self.pmu = AXP2101.AXP2101(sensors_i2c)
         self.pmu.disableALDO2()
 
@@ -163,13 +152,7 @@ class Hardware:
         self.pmu.setALDO3Voltage(3300) # and display touch 3v3
         self.pmu.setALDO4Voltage(3300); # sx1262
         self.pmu.setBLDO2Voltage(3300); # drv2605
-        if sObject.get("BacklightVoltage") != None:
-            if sObject["BacklightVoltage"] > 2600 and sObject["BacklightVoltage"] <= 3300:
-                self.pmu.setALDO2Voltage(sObject["BacklightVoltage"])
-            else:
-                self.pmu.setALDO2Voltage(3300)
-        else:
-            self.pmu.setALDO2Voltage(3300) #default backlight level todo: load from settings (or load it from app 0)
+        self.pmu.setALDO2Voltage(3300) # backlight
 
         self.pmu.disableDC2()
         self.pmu.disableDC3()
@@ -241,8 +224,8 @@ class Hardware:
         pin16 = machine.Pin(16, machine.Pin.IN) #irq touch
         pin17 = machine.Pin(17, machine.Pin.IN) #irq external rtc
         pin14 = machine.Pin(14, machine.Pin.IN) #irq IMU
-        pin21 = machine.Pin(21, machine.Pin.IN, machine.Pin.PULL_UP) #irq axp2101, seems 1.8v of pullup behind a 47k resistor wasnt enough
-        print("axp irq value:", pin21.value())
+        pin21 = machine.Pin(21, machine.Pin.IN, machine.Pin.PULL_UP, drive=machine.Pin.DRIVE_0) #irq axp2101, 1.8v doesnt register as high in micropython and we cant change that
+        #print("axp irq value:", pin21.value())
         pin21.irq(self.irq_pmu, trigger=machine.Pin.IRQ_FALLING, wake=machine.DEEPSLEEP | machine.SLEEP)
         pin16.irq(self.irq_touch, trigger= machine.Pin.IRQ_RISING)
         pin14.irq(self.irq_imu, trigger= machine.Pin.IRQ_RISING, wake=machine.DEEPSLEEP | machine.SLEEP)
@@ -251,6 +234,25 @@ class Hardware:
         self.irq_touch_buffer_pos2 = bytearray(4)
         self.irq_touch_present = False
         self.irq_feedback_present = False
+
+    def init_backlight(self):
+        sObject = Single.Settings.getSettingObject(Single.Settings.hardware)
+        if sObject == None:
+            sObject = {}
+        if self.WatchVersion == WATCHS3:
+            self.pwm_backlight = machine.PWM(machine.Pin(45), freq=1000, duty_u16=self.BACKLIGHT_PWM_DEFAULT)
+        elif self.WatchVersion == WATCHV2:
+            self.pwm_backlight = machine.PWM(machine.Pin(25), freq=1000, duty_u16=self.BACKLIGHT_PWM_DEFAULT)
+        elif self.WatchVersion == WATCHV1:
+            self.pwm_backlight = machine.PWM(machine.Pin(12), freq=1000, duty_u16=self.BACKLIGHT_PWM_DEFAULT)
+        elif self.WatchVersion == WATCHV3:
+            self.pwm_backlight = machine.PWM(machine.Pin(15), freq=1000, duty_u16=self.BACKLIGHT_PWM_DEFAULT)
+        if sObject.get("Backlight") != None:
+            if sObject["Backlight"] >= 0 and sObject["Backlight"] < 65536:
+                self.pwm_backlight.duty_u16(int(sObject["Backlight"]))
+        time.sleep_ms(2)
+        if __debug__:
+            print("pwm:", self.pwm_backlight)
 
     def __init__(self):
         self.WatchVersion = 0 # V1
@@ -275,12 +277,9 @@ class Hardware:
             self.init_axp2101(sensor_i2c)
             time.sleep_ms(20)
 
-        print("AXP2101 good")
-
-
-
         self.init_st7789()
-        print("st7789 good")
+
+        self.init_backlight()
 
         Logger.log("CPU frequ: " + str(machine.freq()))
         Logger.log("Flash Size: " + str(esp.flash_size()))
@@ -292,7 +291,6 @@ class Hardware:
 
 
         self.rtc = pcf8563.PCF8563(sensor_i2c)
-        print("pcf8563 good")
 
         sObject_general = Single.Settings.getSettingObject(Single.Settings.general)
         if sObject_general == None:
@@ -337,11 +335,11 @@ class Hardware:
         #self.imu.feature_enable("tilt")
         #int1config = self.imu.read_byte(bma423.BMA4_INT1_IO_CTRL_ADDR)
         int1config = 0b01010
-        self.imu.write_byte(bma423.BMA4_INT1_IO_CTRL_ADDR, int1config)
+        self.imu.write_byte(bma423.BMA4_INT1_IO_CTRL_ADDR, int1config) # important irq pin settings
         #acc_config = 0x17
         #self.imu.write_byte(bma423.BMA4_ACCEL_CONFIG_ADDR, acc_config)
         #print("int1 imu:", self.imu.read_byte(bma423.BMA4_INT1_IO_CTRL_ADDR))
-        self.imu.map_int(0, bma423.BMA423_WAKEUP_INT)
+        self.imu.map_int(0, bma423.BMA423_WAKEUP_INT) # enable interrupt for wakeup (double tap) feature
         self.imu.map_int(1, 0)
         feat_data = self.imu.read_data(bma423.BMA4_FEATURE_CONFIG_ADDR, bma423.BMA423_FEATURE_SIZE)
         feat_data[bma423.BMA423_WAKEUP_OFFSET] = 0x03 # enable and sensitivity 2/7
@@ -349,13 +347,11 @@ class Hardware:
         #print(list(feat_data))
         self.imu.accel_enable = 1
         #print(self.imu.int_status())
-        #print("BMA internal status:", self.imu.read_byte(bma423.BMA4_INTERNAL_STAT))
-        print("bma423 good")
+        #print("BMA internal status:", self.imu.read_byte(bma423.BMA4_INTERNAL_STAT)) # todo: add check for that see if BMA is all good after init
         self.imu_int1 = 0
         self.imu_int2 = 0
 
         self.init_ft6336()
-        print("ft6336 good")
 
         self.gesture_startpos = (0,0) # gesture emulation
 
@@ -364,7 +360,7 @@ class Hardware:
         else:
             self.init_irq()
 
-        state = machine.disable_irq()
+        state = machine.disable_irq()# you never know if something disabled them previously
         machine.enable_irq(state)
 
 
@@ -379,9 +375,8 @@ class Hardware:
             self.vibration_controller._write_u8(0x01, 0b10000000) # reset
             time.sleep_ms(10)
             self.vibration_controller = adafruit_drv2605.DRV2605(sensor_i2c)
-            self.vibration_controller.mode = adafruit_drv2605.MODE_INTTRIG # i really cant be bothered lol drv looks like it has nice functions but i have other priorities rn
+            self.vibration_controller.mode = adafruit_drv2605.MODE_INTTRIG
             self.vibrator = None
-            print("adafruit_drv2605 good")
 
         machine.freq(80000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
         self.display_lock.release()
@@ -414,9 +409,9 @@ class Hardware:
         if self.WatchVersion == WATCHS3:
             if self.pmu.isVbusIn() and not force:
                 return False
-        else:
-            if self.pmu.isVBUSPlug() and not force: # are we plugged in?
-                return False
+        #else:
+        #    if self.pmu.isVBUSPlug() and not force: # are we plugged in?
+        #        return False
         if self.wifi_lock.locked() and not force:
             return False
         elif self.wifi_lock.locked() and force:
@@ -428,17 +423,17 @@ class Hardware:
             else:
                 return False
         machine.freq(240000000) # go fastly to go to sleep faster
-        self.display.off()
+        self.display.off() # unnecessary if pwm backlight
         self.display.sleep_mode(True)
-        self.pmu.disablePower(axp202_constants.AXP202_LDO2)
-        if self.WatchVersion == WATCHV2:
-            self.touch.power_mode = 3 # permannet sleep until reset
-            # self.pmu.disablePower(axp202_constants.AXP202_LDO3) # shutdown full LCD in case of V2 watch
+        self.pwm_backlight.duty_u16(0)
         if self.WatchVersion == WATCHV2 or self.WatchVersion == WATCHS3:
+            self.touch.power_mode = 3
             self.vibration_controller._write_u8(0x01, 0b01000000) # standby
-        self.pmu.disablePower(axp202_constants.AXP202_LDO4)
-        self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
-        self.pmu.clearIRQ()
+        if self.WatchVersion != WATCHS3:
+            self.pmu.disablePower(axp202_constants.AXP202_LDO4)
+            self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
+            self.pmu.disablePower(axp202_constants.AXP202_LDO2)
+            self.pmu.clearIRQ()
         # 0 = Active, 1 = Monitor, 2= Standby, 3= Hibernate
         #comes out of monitor whenever we touch
         # power mode is NOT documented but this should work
@@ -457,9 +452,10 @@ class Hardware:
                 should_sleep = False
         if self.WatchVersion == WATCHV1:
             self.touch.power_mode = 0
-        self.pmu.setDC3Voltage(Hardware.Vc3V3)
-        self.pmu.enablePower(axp202_constants.AXP202_LDO2)
-        if self.WatchVersion == WATCHV2:
+        if self.WatchVersion != WATCHS3:
+            self.pmu.setDC3Voltage(Hardware.Vc3V3)
+            self.pmu.enablePower(axp202_constants.AXP202_LDO2)
+        if self.WatchVersion == WATCHV2: # todo: same section but for WatchS3
             self.pmu.disablePower(axp202_constants.AXP202_EXTEN); # reset touch
             time.sleep_ms(15)
             self.pmu.enablePower(axp202_constants.AXP202_EXTEN);
@@ -470,6 +466,7 @@ class Hardware:
             #self.init_st7789()
         if self.WatchVersion == WATCHV2 or self.WatchVersion == WATCHS3:
             self.vibration_controller._write_u8(0x01, 0b00000000) #exit standby
+        self.init_backlight()
         self.display.sleep_mode(False)
         self.display.on()
         machine.freq(80000000) # no more fast, todo: see other place where this is

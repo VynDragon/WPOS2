@@ -190,8 +190,9 @@ class Kernel:
             Single.Hardware = self.hardware
             self.framebuffer_array = bytearray(240 * 240 * 2) # 2 byte per pixel)
             self.framebuffer = oframebuf.WPFrameBuffer(self.framebuffer_array, 240, 240, framebuf.RGB565)
-            #_thread.stack_size(Single.MP_THREAD_STACK_SIZE)
-            #_thread.start_new_thread(self.render_thread, ())
+            if not Single.Hardware.WatchVersion == 3: # dont render for WATCHS3 until SPI is fixed as softSPI is too slow and hogs the CPU
+                _thread.stack_size(Single.MP_THREAD_STACK_SIZE)
+                _thread.start_new_thread(self.render_thread, ())
             self._lock.release()
             self.event(Events.RunEvent("home"))
             while(True):

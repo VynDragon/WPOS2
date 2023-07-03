@@ -4,7 +4,7 @@ import PTRS
 import Events
 
 import time, ntptime, math
-import led_32
+from fonts import led_32
 
 
 
