@@ -10,6 +10,7 @@ import TextMode
 import Events
 import esp, esp32
 import Single
+import oframebuf
 
 WATCHV1 = int(0)
 WATCHV2 = int(1)
@@ -20,7 +21,7 @@ WATCHS3 = int(3)
 # also everything that has to do with hardware probably should be lbyl
 
 class Hardware:
-    Vc3V3 = 2800 # we brownout often when disconnecting USB at lower voltages, workaround is resetting the device when USB disconnect
+    Vc3V3 = 3300 # we brownout often when disconnecting USB at lower voltages, workaround is resetting the device when USB disconnect
     Vc3V3S3 = 3300
     #Vc3V3 = 3300
     DISPLAY_WIDTH = 240
@@ -67,11 +68,8 @@ class Hardware:
         if self.WatchVersion != WATCHS3:
             display_spi = machine.SPI(1)
             display_spi.deinit()
-        else:
-            #display_spi = machine.SPI(2) # deinitting esp32S3 makes it angry
-            #display_spi.deinit()
-            pass
-
+        display_spi = machine.SPI(2)
+        display_spi.deinit()
         # uses wrong MOSI pin, slowing it down even more, fixed on TWATCH S3
         if self.WatchVersion == WATCHV2:
             cs = machine.Pin(5, machine.Pin.OUT)
@@ -90,9 +88,11 @@ class Hardware:
         else:
             cs = machine.Pin(5, machine.Pin.OUT)
             dc = machine.Pin(27, machine.Pin.OUT)
-            display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
+            display_spi = machine.SPI(2,baudrate=60000000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,sck=machine.Pin(18),mosi=machine.Pin(19), miso=machine.Pin(23)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
+            #display_spi = machine.SPI(2,baudrate=80000000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,sck=machine.Pin(18),mosi=machine.Pin(19))
             #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
-            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+            #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=16,)
         self.display.init()
         self.display.on()
         #self.display.fill(st7789.BLACK)
@@ -116,8 +116,7 @@ class Hardware:
         mic: 1.6v
         psram: 2.7v :(
         '''
-        if self.WatchVersion != WATCHV2:
-            self.pmu.disablePower(axp202_constants.AXP202_LDO3) # on V2, Touch+ TFT
+        self.pmu.disablePower(axp202_constants.AXP202_LDO3) # on V2, Touch+ TFT
         self.pmu.disablePower(axp202_constants.AXP202_LDO4) # on V2, GPS
         self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
         self.pmu.clearIRQ()
@@ -138,6 +137,10 @@ class Hardware:
             self.pmu.setLDO3Voltage(3300)
             self.pmu.enablePower(axp202_constants.AXP202_LDO3)
             self.pmu.write_byte(axp202_constants.AXP202_GPIO0_CTL, 1) # everything to 0 except first byte, enable GPIO as high so it desinhibit DRV2605... why was this necessary, and only on V2 ?
+        if self.WatchVersion == WATCHV1:
+            self.pmu.setLDO3Mode(axp202_constants.AXP202_LDO3_DCIN_MODE) # what, why? (watch unhappy if not do like that)
+            #self.pmu.setLDO3Voltage(3300)
+            self.pmu.enablePower(axp202_constants.AXP202_LDO3)
 
     def init_axp2101(self, sensors_i2c):
         Logger.log("Initializing AXP2101 PMU...")
@@ -366,6 +369,12 @@ class Hardware:
 
         self.wifi_lock = _thread.allocate_lock()
         self.wifi = None
+        self.audio_buffer = bytearray(10000)
+        self.audio_buffer_mv = memoryview(self.audio_buffer)
+        self.audio = None
+        self.audio_thread = None
+        self.audio_lock = _thread.allocate_lock()
+        self.audio_data_bytes = 0
 
         if self.WatchVersion == WATCHV1 or self.WatchVersion == WATCHV3:
             self.vibrator = machine.Pin(4, machine.Pin.OUT)
@@ -378,7 +387,7 @@ class Hardware:
             self.vibration_controller.mode = adafruit_drv2605.MODE_INTTRIG
             self.vibrator = None
 
-        machine.freq(80000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
+        machine.freq(240000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
         self.display_lock.release()
 
 
@@ -409,23 +418,25 @@ class Hardware:
         if self.WatchVersion == WATCHS3:
             if self.pmu.isVbusIn() and not force:
                 return False
-        #else:
-        #    if self.pmu.isVBUSPlug() and not force: # are we plugged in?
-        #        return False
-        if self.wifi_lock.locked() and not force:
+        else:
+            if self.pmu.isVBUSPlug() and not force: # are we plugged in?
+                return False
+        if (self.wifi_lock.locked() or self.audio_lock.locked()) and not force:
             return False
-        elif self.wifi_lock.locked() and force:
+        elif (self.wifi_lock.locked() or self.audio_lock.locked()) and force:
             self.releaseWifi(force) # fuck them apps
+            self.releaseAudio()
         if not self.display_lock.acquire():
             if force:
                 self.display_lock.release()
-                self.display_lock.acquire()
+                self.display_lock.acquire()# O(1) for the whole render pipeline with that, but quite slow... but not much more than even a simple direct draw
+        # seems like to get more speed would need to do quite a lot on the C side of things
             else:
                 return False
         machine.freq(240000000) # go fastly to go to sleep faster
         self.display.off() # unnecessary if pwm backlight
         self.display.sleep_mode(True)
-        self.pwm_backlight.duty_u16(0)
+        self.pwm_backlight.deinit()
         if self.WatchVersion == WATCHV2 or self.WatchVersion == WATCHS3:
             self.touch.power_mode = 3
             self.vibration_controller._write_u8(0x01, 0b01000000) # standby
@@ -433,6 +444,7 @@ class Hardware:
             self.pmu.disablePower(axp202_constants.AXP202_LDO4)
             self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
             self.pmu.disablePower(axp202_constants.AXP202_LDO2)
+            self.pmu.disablePower(axp202_constants.AXP202_LDO3)
             self.pmu.clearIRQ()
         # 0 = Active, 1 = Monitor, 2= Standby, 3= Hibernate
         #comes out of monitor whenever we touch
@@ -440,6 +452,8 @@ class Hardware:
         # hibernation of FT6336 is up to 1.5 ma savings (active:4mA, monitor: 1.5mA, hibernate: 50 uA)
         # except lilygo didnt connect the reset pin and we need it to restart the display
         # monitor mode low rate of update good workaround?
+        if self.WatchVersion == WATCHV1:
+            self.touch.power_mode = 1
         should_sleep = True
         while should_sleep:
             if self.WatchVersion == WATCHV1:
@@ -455,6 +469,7 @@ class Hardware:
         if self.WatchVersion != WATCHS3:
             self.pmu.setDC3Voltage(Hardware.Vc3V3)
             self.pmu.enablePower(axp202_constants.AXP202_LDO2)
+            self.pmu.enablePower(axp202_constants.AXP202_LDO3)
         if self.WatchVersion == WATCHV2: # todo: same section but for WatchS3
             self.pmu.disablePower(axp202_constants.AXP202_EXTEN); # reset touch
             time.sleep_ms(15)
@@ -476,6 +491,116 @@ class Hardware:
     def blit_buffer_rgb565(self, array):
         self.display.blit_buffer(array, 0, 0, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT) # O(1) for the whole render pipeline with that, but quite slow... but not much more than even a simple direct draw
         # seems like to get more speed would need to do quite a lot on the C side of things
+
+    @micropython.native
+    def blit_framebuffer_rgb565(self, fbuf: oframebuf.WPFrameBuffer):
+        if fbuf.minX == None: # drew nothing
+            return
+        buff_mv = memoryview(fbuf.buffer) # we no want copies
+        uwidth = min(fbuf.maxX - fbuf.minX, self.DISPLAY_WIDTH)
+        uheight = min(fbuf.maxY - fbuf.minY, self.DISPLAY_HEIGHT)
+
+        if uwidth == self.DISPLAY_WIDTH: # whole lines so we can skip the copies
+            if fbuf.minY == 0:
+                self.display.blit_buffer(buff_mv, 0, 0, Hardware.DISPLAY_WIDTH, uheight)
+            else:
+                self.display.blit_buffer(buff_mv[fbuf.minY * 2 * self.DISPLAY_HEIGHT:(fbuf.minY + uheight) * 2 * self.DISPLAY_HEIGHT], 0, 0, Hardware.DISPLAY_WIDTH, uheight)
+            if __debug__:
+                print("update full line zone:", uwidth, uheight)
+            return
+        if uheight == self.DISPLAY_HEIGHT: # not worth doing copy, whole screen is updated
+            self.display.blit_buffer(buff_mv, 0, 0, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT)
+            return
+
+        ustart = int(fbuf.minX * 2 + fbuf.minY * self.DISPLAY_WIDTH * 2)
+
+        uend = int(uheight * uwidth) * 2
+
+        if __debug__:
+            print("update zone:", fbuf.minX, fbuf.minY, ustart, uend, uwidth, uheight)
+
+        tmp_buff = bytearray(uwidth * uheight * 2)
+        for line in range(0, uheight):
+            linestart = line * uwidth * 2
+            tmp_buff[linestart : linestart + uwidth * 2] = buff_mv[ustart + line * self.DISPLAY_WIDTH * 2:ustart + line * self.DISPLAY_WIDTH * 2 + uwidth * 2]
+
+        self.display.blit_buffer(tmp_buff, fbuf.minX, fbuf.minY, uwidth, uheight)
+        fbuf.clear_max()
+
+    @micropython.native
+    def blit_framebuffer_rgb565_halfmode1(self, fbuf: oframebuf.WPFrameBuffer, line_off: int = 0): # blit only half the screen, line_off 0 or 1
+        if fbuf.minX == None: # drew nothing
+            return
+        uwidth = min(fbuf.maxX - fbuf.minX, self.DISPLAY_WIDTH)
+        buff_mv = memoryview(fbuf.buffer) # we no want copies
+        for half_line in range(int(fbuf.minY / 2), int(fbuf.maxY / 2) - line_off):
+            self.display.blit_buffer(buff_mv[(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH + fbuf.minX * 2:(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH + (fbuf.minX + uwidth) * 2], fbuf.minX, half_line * 2 + line_off, uwidth, 1)
+        if __debug__:
+            print("blitted zone:", fbuf.minY, fbuf.maxY)
+        fbuf.clear_max()
+
+
+    @micropython.native
+    def blit_framebuffer_rgb565_halfmode2(self, fbuf: oframebuf.WPFrameBuffer, line_off: int = 0, chunk_size: int = 8): # blit only half the screen, line_off 0 or 1
+        if fbuf.minX == None: # drew nothing
+            return
+        buff_mv = memoryview(fbuf.buffer) # we no want copies
+        #for half_line in range(int(fbuf.minY / 2), int(fbuf.maxY / 2) - line_off):
+        #    self.display.blit_buffer(buff_mv[(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH:(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH + self.DISPLAY_WIDTH * 2], 0, half_line * 2 + line_off, Hardware.DISPLAY_WIDTH, 1)
+        rline_off = line_off * chunk_size
+        if __debug__:
+            print("blitting zone:", fbuf.minY, fbuf.maxY)
+        for half_line in range(fbuf.minY, fbuf.maxY - rline_off, chunk_size * 2): # less chunks = more faster
+            self.display.blit_buffer(buff_mv[(half_line + rline_off) * 2 * self.DISPLAY_WIDTH:(half_line + rline_off) * 2 * self.DISPLAY_WIDTH + self.DISPLAY_WIDTH * chunk_size * 2], 0, half_line + rline_off, Hardware.DISPLAY_WIDTH, chunk_size)
+        fbuf.clear_max()
+
+
+    def readyAudio(self):
+        if self.audio_thread != None:
+            return False
+        try:
+            _thread.stack_size(Single.MP_THREAD_STACK_SIZE)
+            _thread.start_new_thread(self.audio_threadf, ())
+        except Exception as e:
+            return False, e
+        return True
+
+    def audio_threadf(self):
+        self.audio_thread = _thread.get_ident()
+        self.audio = machine.I2S(0, sck=machine.Pin(26), ws=machine.Pin(25), sd=machine.Pin(33),
+                mode=machine.I2S.TX,
+                bits=16,
+                format=machine.I2S.MONO,
+                rate=4000,
+                ibuf=4000)
+        while self.audio != None:
+            self.audio_lock.acquire()
+            if self.audio == None:
+                break
+            if self.audio_data_bytes > 0:
+                self.audio.write(self.audio_buffer_mv[0:self.audio_data_bytes])
+                self.audio_data_bytes = 0
+            self.audio_lock.release()
+            time.sleep(0)
+
+
+    def releaseAudio(self, blocking = True, timeout = -1):
+        if self.audio_lock.acquire(blocking, timeout):
+            self.audio.deinit()
+            self.audio = None
+            self.audio_lock.release()
+            return True
+        return False
+
+    def writeAudio(self, data: bytearray, blocking = True, timeout = -1):
+        print("sending pcm:", data)
+        if self.audio_lock.acquire(blocking, timeout):
+            self.audio_data_bytes = len(data)
+            self.audio_buffer_mv[0:self.audio_data_bytes] = data
+            self.audio_lock.release()
+            return True
+        return False
+
 
     def feedback1(self, _ = None):
         if self.vibrator:
@@ -670,7 +795,7 @@ class Hardware:
             if a_pass != None:
                 self.wifi.connect(a_network, a_pass)
                 while self.wifi.status() == network.STAT_CONNECTING:
-                    time.sleep_ms(500)
+                    time.sleep(0)
                 if self.wifi.status() == network.STAT_GOT_IP:
                     self.wifi.config(pm=self.wifi.PM_POWERSAVE)
                     return self.wifi

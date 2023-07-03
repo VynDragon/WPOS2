@@ -3,7 +3,7 @@
 
 import Events
 import Single
-import framebuf
+import framebuf, oframebuf
 
 class Button:
     TOUCH_LAST = 5 # 5 frames
@@ -184,7 +184,7 @@ class Graph:
         self.last_value = 0.0
         if callback == None:
             self.callback = self.default_callback
-        self.draw_buff = framebuf.FrameBuffer(bytearray(self.rw * self.rh * 2), self.rw, self.rh, framebuf.RGB565)
+        self.draw_buff = oframebuf.FrameBuffer(bytearray(self.rw * self.rh * 2), self.rw, self.rh, framebuf.RGB565)
         if self.bg:
             self.draw_buff.rect(0, 0, self.rw, self.rh, Single.DEFAULT_COLOR, True)
     def default_callback(self):

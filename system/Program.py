@@ -19,7 +19,7 @@ class Program:
 
     def _do_think(self):# expected to be called from its own thread whenever possible.
         if not self.ready:
-            time.sleep_ms(100)
+            time.sleep(0)
             return
         if self._lock.acquire():
             self.think()
@@ -45,7 +45,7 @@ class Program:
                 event = self.input.popleft()
         except IndexError:
             pass
-        time.sleep_ms(1000)
+        time.sleep(0)
 
     def draw(self, WPFramebuffer):
         pass

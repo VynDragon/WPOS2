@@ -39,7 +39,7 @@ class test(Program):
             pass
         #if __debug__:
         #    print("test thought")
-        time.sleep_ms(1000)
+        time.sleep(0)
 
     def event(self, event):
         if isinstance(event, Events.TouchEvent):

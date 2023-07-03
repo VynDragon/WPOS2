@@ -193,15 +193,18 @@ class Kernel:
             if not Single.Hardware.WatchVersion == 3: # dont render for WATCHS3 until SPI is fixed as softSPI is too slow and hogs the CPU
                 _thread.stack_size(Single.MP_THREAD_STACK_SIZE)
                 _thread.start_new_thread(self.render_thread, ())
+                _thread.stack_size(Single.MP_THREAD_STACK_SIZE)
+                _thread.start_new_thread(self.blit_thread, ())
             self._lock.release()
-            self.event(Events.RunEvent("home"))
+            #self.event(Events.RunEvent("home"))
+            self.event(Events.RunEvent("bad_apple"))
             while(True):
                 self._lock.acquire()
                 Logger.process()
                 self.process_events()
                 self.hardware.process()
                 self._lock.release()
-                time.sleep_ms(70)
+                time.sleep(0)
 
         except Exception as e:
             Single.fucky_wucky = True
@@ -224,30 +227,63 @@ class Kernel:
         except:
             print("we shaint be there... but it's probably okay (render timer irq)")'''
 
+
+    # single writer thread and single reader thread, in theory we can have 2 threads for render
+
     @micropython.native
     def render_thread(self):
+        self.render_gate = False # gates for both so they work at the same time but wait for each others, the idea is to leave the maximum amount of 'CPU S
         while(not Single.fucky_wucky):
             startrender = time.ticks_ms()
             if self.loading_program:
                 self.render_loading_program()
             else:
                 self.render()
+            self.render_gate = True
+            #if not self.max_refresh:
+            #    time.sleep(0) # attempt to prevent rendering multiple times in a blit (give time to blit thread to start waiting for lock)
+            #Single.Hardware.display_lock.acquire() # wait for blitting to finish before starting next frame
+            #Single.Hardware.display_lock.release()
             if not self.max_refresh:
-                while(time.ticks_ms() - startrender < 100): # hold 10 fps
-                    time.sleep_ms(5)
+                while time.ticks_ms() - startrender < 50 or self.render_gate == True: # hold 20 fps
+                    time.sleep(0)
 
+    @micropython.native
+    def blit_thread(self):
+        self.line_off = 0
+        self.blit_gate = False
+        while(not Single.fucky_wucky):
+            startblit = time.ticks_ms()
+            self.blit()
+            self.render_gate = False
+            if not self.max_refresh:
+                while time.ticks_ms() - startblit < 50 or self.render_gate == False: # attempt to hold 20 fps
+                    time.sleep(0)
+
+    @micropython.native
+    def blit(self):
+        self.blit_tick = time.ticks_ms()
+        # the slow bit:
+        if Single.Hardware.display_lock.acquire():
+            #Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)
+            #Single.Hardware.blit_framebuffer_rgb565(self.framebuffer)
+            #Single.Hardware.blit_framebuffer_rgb565_halfmode2(self.framebuffer, self.line_off, 16)
+            Single.Hardware.blit_framebuffer_rgb565_halfmode1(self.framebuffer, self.line_off)
+            if self.line_off == 0:
+                self.line_off = 1
+            else:
+                self.line_off = 0
+            #Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)
+            #time.sleep(0) # give time to grab lock
+            Single.Hardware.display_lock.release()
+        if __debug__:
+            ft = time.ticks_ms() - self.blit_tick
+            if ft > 0:
+                print("took", ft, "ms to blit,", 1000/ft, "fps")
 
     @micropython.native
     def render(self):
-        #self.render_tick = time.ticks_ms()
-        #self.blit_tick = time.ticks_ms()
-        # the slow bit:
-        if Single.Hardware.display_lock.acquire():
-            Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)
-            Single.Hardware.display_lock.release()
-        '''if __debug__:
-            ft = time.ticks_ms() - self.blit_tick
-            print("took", ft, "ms to blit,", 1000/ft, "fps")'''
+        self.render_tick = time.ticks_ms()
         app = None
         self.running_lock.acquire()
         if len(self.running) > 0:
@@ -255,13 +291,11 @@ class Kernel:
         self.running_lock.release()
         if app:
             app._do_draw(self.framebuffer)
-        '''if __debug__:
+        if __debug__:
             ft = time.ticks_ms() - self.render_tick
-            print("took", ft, "ms to render,", 1000/ft, "fps")'''
+            if ft > 0:
+                print("took", ft, "ms to render,", 1000/ft, "fps")
 
     def render_loading_program(self):
-        self.framebuffer.fill(0)
+        self.framebuffer.fill(0) # fill doesnt set boundaries in buffer
         self.framebuffer.text("LOADING", 0.5 - Single.DEFAULT_TEXT_RATIO_INV * 3.5, 0.5 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_TEXT_COLOR)
-        if Single.Hardware.display_lock.acquire():
-            Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)
-            Single.Hardware.display_lock.release()

@@ -51,7 +51,7 @@ class keyboard(Program):
                 event = self.input.popleft()
         except IndexError:
             pass
-        time.sleep_ms(1000)
+        time.sleep(0)
 
     @micropython.native
     def key(self, x, y):

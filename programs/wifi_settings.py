@@ -93,7 +93,7 @@ class wifi_settings(Program):
                 self.buttonTest.event(event)
         except IndexError:
             pass
-        time.sleep_ms(250)
+        time.sleep(0)
 
 
     @micropython.native

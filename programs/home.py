@@ -18,6 +18,7 @@ class home(Program):
         self.percent = 0
         self.mv = 0
         self.ma = 0
+        self.lastSeconds = 0
 
     def start(self):
         if not Single.Hardware.acquireWifi():
@@ -54,10 +55,10 @@ class home(Program):
         self.mv = Single.Hardware.get_battery_voltage()
         self.ma = Single.Hardware.get_battery_current()
         self.ampgraph.add_point(self.ma / 80.0)
-        time.sleep_ms(100)
+        time.sleep(0)
 
     def sleep_callback(self):
-        time.sleep_ms(25) # give it a little time to find its bearing.. i guess?
+        time.sleep(0)
         self.ma = Single.Hardware.get_battery_current()
         self.ampgraph.add_point(self.ma / 80.0, Single.DEFAULT_BG_COLOR)
         try:
@@ -75,6 +76,7 @@ class home(Program):
 
 
     def rightometer(self, buff, px, py):
+        buff.rect(px - 0.225, py - 0.225, 0.5, 0.5, Single.DEFAULT_BG_COLOR, True)
         x, y, z = Single.Hardware.imu.read_accel()
         buff.ellipse(px, py, 0.2, 0.2, Single.DEFAULT_OUTLINE_COLOR)
         buff.ellipse(px, py, 0.05, 0.05, Single.DEFAULT_OUTLINE_COLOR)
@@ -101,26 +103,30 @@ class home(Program):
 
     @micropython.native
     def draw(self, buff):
-        buff.fill(0)
-        if self.mode == 0:
 
-            onthtw = 1.0/(Single.Hardware.DISPLAY_WIDTH/32.0)
-            onthth = 1.0/(Single.Hardware.DISPLAY_HEIGHT/32.0)
+        if self.mode == 0:
+            #buff.fill(0) # that doesnt set a boundary
+            buff.rect(0, 0, 1.0, Single.DEFAULT_TEXT_RATIO_INV , Single.DEFAULT_BG_COLOR, True)
             #buff.hline(0.0, 0.25, 1.0, Single.DEFAULT_OUTLINE_COLOR)
-            buff.hline(0.0, 0.25 + onthth, 1.0, Single.DEFAULT_OUTLINE_COLOR)
-            self.ampgraph.draw(buff)
-            if Single.Hardware.charging():
-                buff.text("CHARGING", 0.02, Single.DEFAULT_TEXT_RATIO_INV * 2, Single.DEFAULT_TEXT_COLOR)
-            buff.text2("{:0>2d}:{:0>2d}:{:0>2d}".format(time.gmtime()[3], time.gmtime()[4], time.gmtime()[5]), 0.0 + onthtw * 1.0, 0.25, led_32)
             curtime = time.gmtime()
-            buff.text("{}/{}/{}".format(curtime[2],curtime[1],curtime[0]), 0.5 - Single.DEFAULT_TEXT_RATIO_INV_2 * 10.0,0.5, Single.DEFAULT_TEXT_COLOR)
+            if curtime[5] != self.lastSeconds: # update those only once per second
+                onthtw = 1.0/(Single.Hardware.DISPLAY_WIDTH/32.0)
+                onthth = 1.0/(Single.Hardware.DISPLAY_HEIGHT/32.0)
+                buff.rect(0, Single.DEFAULT_TEXT_RATIO_INV, 1.0, 0.5 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_BG_COLOR, True)
+                buff.hline(0.0, 0.25 + onthth, 1.0, Single.DEFAULT_OUTLINE_COLOR)
+                self.ampgraph.draw(buff)
+                if Single.Hardware.charging():
+                    buff.text("CHARGING", 0.02, Single.DEFAULT_TEXT_RATIO_INV * 2, Single.DEFAULT_TEXT_COLOR)
+                buff.text2("{:0>2d}:{:0>2d}:{:0>2d}".format(curtime[3], curtime[4], curtime[5]), 0.0 + onthtw * 1.0, 0.25, led_32)
+                self.lastSeconds = curtime[5]
             if self.percent < 101:
                 buff.text("{}% {}mV {}mA".format(int(self.percent), self.mv, self.ma), 0.0, 0.0, Single.DEFAULT_TEXT_COLOR)
             else:
                 buff.text("-(= {}mV {}mA".format(int(self.percent), self.mv, self.ma), 0.0, 0.0, Single.DEFAULT_TEXT_COLOR)
             buff.hline(0.0, Single.DEFAULT_TEXT_RATIO_INV, 1.0, Single.DEFAULT_OUTLINE_COLOR)
             self.rightometer(buff, 0.25, 0.75)
+            buff.text("{}/{}/{}".format(curtime[2],curtime[1],curtime[0]), 0.5 - Single.DEFAULT_TEXT_RATIO_INV_2 * 10.0,0.5, Single.DEFAULT_TEXT_COLOR)
         if self.mode == 1:
-            pass
+            buff.fill(0)
 
 

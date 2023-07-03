@@ -30,7 +30,7 @@ class WriterFrameBuffer(framebuf.FrameBuffer):
         self.height = height
         self.palette = WPPalette()
 
-class WPFrameBuffer(framebuf.FrameBuffer):
+class FrameBuffer(framebuf.FrameBuffer):
     def __init__(self, buffer, width, height, format, stride = None):
         if stride == None:
             super().__init__(buffer, width, height, format, width)
@@ -38,6 +38,15 @@ class WPFrameBuffer(framebuf.FrameBuffer):
             super().__init__(buffer, width, height, format, stride)
         self.width = width
         self.height = height
+        self.buffer = buffer
+
+
+class WPFrameBuffer(FrameBuffer):
+    def __init__(self, buffer, width, height, format, stride = None):
+        if stride == None:
+            super().__init__(buffer, width, height, format, width)
+        else:
+            super().__init__(buffer, width, height, format, stride)
         self.maxX = None
         self.maxY = None
         self.minX = None
@@ -45,7 +54,8 @@ class WPFrameBuffer(framebuf.FrameBuffer):
         self.palette = WPPalette()
         self.fb = WriterFrameBuffer(buffer, width, height, framebuf.RGB565) # regular framebuffer backed by same buffer for high performance access (with no floats but requires device awareness)
 
-    def update_max(self, x, y):
+    @micropython.native
+    def update_max(self, x: int, y: int) -> None:
         if self.maxX == None:
            self.maxX = x
         else:
@@ -63,53 +73,91 @@ class WPFrameBuffer(framebuf.FrameBuffer):
         else:
             self.minY = min(y, self.minY)
 
-    def clear_max():
+    @micropython.native
+    def clear_max(self):
         self.maxX = None
         self.maxY = None
         self.minX = None
         self.minY = None
 
+    @micropython.native
     def pixel(self, x, y, c):
-        self.update_max(x, y)
-        super().pixel(int(x * self.width), int(y * self.height), c)
+        rx = int(x * self.width)
+        ry = int(y * self.height)
+        self.update_max(rx, ry)
+        super().pixel(rx, ry, c)
 
+    @micropython.native
     def hline(self, x, y, w, c):
-        self.update_max(x, y)
-        self.update_max(x+w, y)
-        super().hline(int(x * self.width), int(y * self.height), int(w * self.width), c)
+        rx = int(x * self.width)
+        ry = int(y * self.height)
+        rw = int(w * self.width)
+        self.update_max(rx, ry)
+        self.update_max(rx+rw, ry)
+        super().hline(rx, ry, rw, c)
 
+    @micropython.native
     def vline(self, x, y, h, c):
-        self.update_max(x, y)
-        self.update_max(x, y+h)
-        super().vline(int(x * self.width), int(y * self.height), int(h * self.height), c)
+        rx = int(x * self.width)
+        ry = int(y * self.height)
+        rh = int(h * self.height)
+        self.update_max(rx, ry)
+        self.update_max(rx, ry+rh)
+        super().vline(rx, ry, rh, c)
 
+    @micropython.native
     def line(self, x1, y1, x2, y2, c):
-        self.update_max(x1, y1)
-        self.update_max(x2, y2)
-        super().line(int(x1 * self.width), int(y1 * self.height), int(x2 * self.width), int(y2 * self.height), c)
+        rx1 = int(x1 * self.width)
+        ry1 = int(y1 * self.height)
+        rx2 = int(x2 * self.width)
+        ry2 = int(y2 * self.height)
+        self.update_max(rx1, ry1)
+        self.update_max(rx2, ry2)
+        super().line(rx1, ry1, rx2, ry2, c)
 
+    @micropython.native
     def rect(self, x, y, w, h, c, f = False):
-        self.update_max(x, y)
-        self.update_max(x + w, y + h)
-        super().rect(int(x * self.width), int(y * self.height), int(w * self.width), int(h * self.height), c, f)
+        rx = int(x * self.width)
+        ry = int(y * self.height)
+        rw = int(w * self.width)
+        rh = int(h * self.height)
+        self.update_max(rx, ry)
+        self.update_max(rx + rw, ry + rh)
+        super().rect(rx, ry, rw, rh, c, f)
 
+    @micropython.native
     def ellipse(self, x, y, w, h, c, f = False):
-        self.update_max(x, y)
-        self.update_max(x + w, y + h)
-        super().ellipse(int(x * self.width), int(y * self.height), int(w * self.width), int(h * self.height), c, f)
+        rx = int(x * self.width)
+        ry = int(y * self.height)
+        rw = int(w * self.width)
+        rh = int(h * self.height)
+        self.update_max(rx - rw / 2, ry - rw / 2)
+        self.update_max(rx + rw / 2, ry + rh / 2)
+        super().ellipse(rx, ry, rw, rh, c, f)
 
+    @micropython.native
     def text(self, s, x, y, c):
-        self.update_max(x, y)
-        self.update_max(x + 8 * len(s), y+8)
-        super().text(s, int(x * self.width), int(y * self.height), c)
+        rx = int(x * self.width)
+        ry = int(y * self.height)
+        self.update_max(rx, ry)
+        self.update_max(rx + 8 * len(s), ry + 8)
+        super().text(s, rx, ry, c)
 
+    @micropython.native
     def text2(self, s, x, y, font):
+        rx = int(x * self.width)
+        ry = int(y * self.height)
+        self.update_max(rx, ry)
+        monospace_size = font.height()
+        self.update_max(rx + monospace_size * len(s), ry + monospace_size)
         the_writer = writer.CWriter(self.fb , font, Single.DEFAULT_TEXT_COLOR, Single.DEFAULT_BG_COLOR, False)
-        the_writer.set_textpos(self.fb, int(y * self.height), int(x * self.width)) # ?? different x y order than other fucntions?
+        the_writer.set_textpos(self.fb, ry, rx) # ?? different x y order than other fucntions?
         the_writer.printstring(s)
 
-
-    def blit(self, fbuf, x, y, key=-1, palette = None):
-        #self.update_max(x, y)
-        #self.update_max(x + fbuf.width, y  + fbuf.height)
-        super().blit(fbuf, int(x * self.width), int(y * self.height), key, palette)
+    @micropython.native
+    def blit(self, fbuf: FrameBuffer, x, y, key=-1, palette = None):
+        rx = int(x * self.width)
+        ry = int(y * self.height)
+        self.update_max(rx, ry)
+        self.update_max(rx + fbuf.width, ry + fbuf.height)
+        super().blit(fbuf, rx, ry, key, palette)
