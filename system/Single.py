@@ -16,7 +16,8 @@ DEFAULT_TEXT_RATIO = 30  #characters per line, 30 for 240x240 screen with 8 pixe
 DEFAULT_TEXT_RATIO_INV = 1.0/DEFAULT_TEXT_RATIO  #expensive maths
 DEFAULT_TEXT_RATIO_INV_2 = DEFAULT_TEXT_RATIO_INV/2.0
 
-MP_THREAD_STACK_SIZE = 16 * 1024 # bruh
+MP_THREAD_STACK_SIZE = 8 * 1024 # bruh
+MP_SMALLTHREAD_STACK_SIZE = 1024 # bruh
 
 '''
 it refuses to do more than 64*1024, but it's only 64 kb and we still hit bs recursion errors in non-recursive code...

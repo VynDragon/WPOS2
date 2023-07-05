@@ -16,7 +16,7 @@ class Program:
             self.id = _thread.get_ident()
         else:
             self.id = id
-
+    @micropython.native
     def _do_think(self):# expected to be called from its own thread whenever possible.
         if not self.ready:
             time.sleep(0)
@@ -29,7 +29,7 @@ class Program:
     def _do_draw(self, WPFramebuffer): #same as think but nonblocking, expected to be called from display thread every X time
         if self._draw and self.ready:
             self.draw(WPFramebuffer)
-
+    @micropython.native
     def _do_stop(self):
         self.stop()
         if _thread.get_ident() == self.thread:
@@ -49,7 +49,7 @@ class Program:
 
     def draw(self, WPFramebuffer):
         pass
-
+    @micropython.native
     def _do_start(self):
         self.start()
         self.ready = True

@@ -1,5 +1,6 @@
 import PTRS
 from system.Program import Program
+import Events
 import Single
 import oframebuf
 import framebuf
@@ -25,10 +26,10 @@ class bad_apple(Program):
         self.started = False
         self.video = None
         self.audio = None
-        self.frame = None
+        self.frame = bytearray(self.FRAME_SIZE)
         self.previousframe = None
         self.palette = None
-        self.lastframe = 0
+        self.nextframetime = None
         self.data_ready = False
         self.update_timer = None
 
@@ -36,17 +37,24 @@ class bad_apple(Program):
         machine.freq(240000000) # I'm giving it all she's got captain!
         print(machine.freq())
         self.started = True
-        self.lastframe = time.ticks_ms()
-
+        self.nextframetime = time.ticks_us()
 
     def start(self):
         self.button = PTRS.Button(0.25,0.25,0.5,0.5, self.button_pressed,"Go")
         gc.collect() # yep
-        self.lastframe = time.ticks_ms()
         self.palette = oframebuf.WPPalette()
         #if not Single.Hardware.readyAudio() and __debug__:
         #    print("Couldnt start audio")
-        self.video = zlib.DecompIO(open("/largefiles/bad_apple_120_120.bw.gz", "rb"), 31)
+        the_video_file = open("/largefiles/bad_apple_120_120.bw.gz", "rb")
+        magic =0
+        try:
+            magic = the_video_file.read(2)
+        except:
+            pass
+        if magic != bytes([0x1f, 0x8b]):
+            return Single.Kernel.event(Events.StopEvent(self.thread))
+        the_video_file.seek(0,0)
+        self.video = zlib.DecompIO(the_video_file, 31)
         #self.video = open("/largefiles/bad_apple.bw", "rb")
         #self.audio = open("/largefiles/bad_apple.pcm_s16", "rb")
         #self.update_timer = machine.Timer(1, mode=machine.Timer.PERIODIC, freq=10, callback=self.update_frame)
@@ -86,23 +94,24 @@ class bad_apple(Program):
     def update_frame(self):
         try:
             self.previousframe = self.frame
-            self.frame = bytearray(self.video.read(self.FRAME_SIZE))
-            while(time.ticks_ms() - self.lastframe < self.TARGET_FRAMETIME): # attempt to hold 20 fps
-                time.sleep(0)
-            frametime = time.ticks_ms() - self.lastframe
-            if __debug__:
-                print("movie frame preparation time:", frametime)
+            tick_diff = time.ticks_diff(self.nextframetime, time.ticks_us())  # correct way, beeg precision
+            if tick_diff <= 0:
+                self.nextframetime = time.ticks_add(time.ticks_us(), tick_diff) # hopefully that's enough speed correction, otherwise we might need to calculate a exact offset using the rtc instead
+                #print(self.nextframetime, time.ticks_us(), tick_diff)
+                video_frame = self.video.readinto(self.frame) # bad habit of crashing the esp when reaching end of file without reporting it
+                if video_frame != self.FRAME_SIZE: # end of file
+                    self.started = False
+                    self.previousframe = None
+                    return
 
-            if frametime > self.TARGET_FRAMETIME: # time compensation i guess?
-                self.lastframe = time.ticks_ms() - (frametime - self.TARGET_FRAMETIME)
-            else:
-                self.lastframe = time.ticks_ms()
-            self.data_ready = True
+                self.data_ready = True
+                self.nextframetime = time.ticks_add(self.nextframetime, self.TARGET_FRAMETIME * 1000)
 
             #eightbit = bytearray(self.audio.read(int(100.0/1000.0/self.AUDIO_RATE)))
             #Single.Hardware.writeAudio(eightbit)
         except:
-            pass
+            self.started = False # also end of file
+            self.previousframe = None
 
     def think(self):
         if self.started:
@@ -114,7 +123,7 @@ class bad_apple(Program):
                     self.button.event(event)
             except IndexError:
                 pass
-            time.sleep(0)
+        time.sleep(0)
 
     @micropython.native
     def draw(self, buff):

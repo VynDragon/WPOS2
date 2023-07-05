@@ -68,23 +68,17 @@ class Hardware:
         if self.WatchVersion != WATCHS3:
             display_spi = machine.SPI(1)
             display_spi.deinit()
-        display_spi = machine.SPI(2)
-        display_spi.deinit()
-        # uses wrong MOSI pin, slowing it down even more, fixed on TWATCH S3
-        if self.WatchVersion == WATCHV2:
-            cs = machine.Pin(5, machine.Pin.OUT)
-            dc = machine.Pin(27, machine.Pin.OUT)
-            display_spi = machine.SPI(1,baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(19, machine.Pin.OUT)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
-            #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(25, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
-            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+            display_spi = machine.SPI(2)
+            display_spi.deinit()
         elif self.WatchVersion == WATCHS3:
             cs = machine.Pin(12, machine.Pin.OUT)
             dc = machine.Pin(38, machine.Pin.OUT)
-            display_spi = machine.SoftSPI(baudrate=800000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT), miso=machine.Pin(9)) # still init as softSPI, if you REALLY need to write to the screen you can force it to refresh (it will take ages and the other programs will be unhappy)
-            machine.Pin(9, machine.Pin.IN) # we dont actually want to write to pin 9, it's sx1262's, but softspi insists on a miso
-            #display_spi = machine.SPI(2, baudrate=40000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT)) # SPI broken for me, see https://github.com/micropython/micropython/issues/11918
+            #display_spi = machine.SoftSPI(baudrate=800000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT), miso=machine.Pin(9)) # still init as softSPI, if you REALLY need to write to the screen you can force it to refresh (it will take ages and the other programs will be unhappy)
+             # we dont actually want to write to pin 9, it's sx1262's, but softspi insists on a miso
+            display_spi = machine.SPI(2, baudrate=80000000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT), miso=machine.Pin(2))
+            machine.Pin(9, machine.Pin.IN)
             #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(45, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
-            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
+            self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=16,)
         else:
             cs = machine.Pin(5, machine.Pin.OUT)
             dc = machine.Pin(27, machine.Pin.OUT)
@@ -269,9 +263,9 @@ class Hardware:
 
         sensor_i2c = None
         if self.WatchVersion < WATCHS3:
-            sensor_i2c = machine.SoftI2C(scl=machine.Pin(22, machine.Pin.OUT), sda=machine.Pin(21, machine.Pin.OUT), freq=100000) #we dont need i2c very fast here and that can save us 0.6 ma on BMA423
+            sensor_i2c = machine.SoftI2C(scl=machine.Pin(22), sda=machine.Pin(21), freq=100000) #we dont need i2c very fast here and that can save us 0.6 ma on BMA423
         else:
-            sensor_i2c = machine.SoftI2C(scl=machine.Pin(11, machine.Pin.OUT), sda=machine.Pin(10, machine.Pin.OUT), freq=100000)
+            sensor_i2c = machine.SoftI2C(scl=machine.Pin(11), sda=machine.Pin(10), freq=100000)
 
         if self.WatchVersion < WATCHS3:
             self.init_axp202()
@@ -330,8 +324,11 @@ class Hardware:
         sensor_i2c.writeto_mem(bma423.BMA4_I2C_ADDR_SECONDARY, bma423.BMA4_CMD_ADDR, bouf) # there is trace of this being previously done in the drivers but not anymore?
         time.sleep_ms(5)
         self.imu = bma423.BMA423(sensor_i2c) # re-initialize
-        self.imu.accel_range = bma423.BMA4_ACCEL_RANGE_8G # 4g ??
         self.imu.advance_power_save = 0
+        bouf[0] = 0x08 | 0x02 << 4 | 0 << 7
+        sensor_i2c.writeto_mem(bma423.BMA4_I2C_ADDR_SECONDARY, bma423.BMA4_ACCEL_CONFIG_ADDR, bouf)
+        self.imu.accel_range = bma423.BMA4_ACCEL_RANGE_8G # 4g ??
+
         #print("BMA internal status:", self.imu.read_byte(bma423.BMA4_INTERNAL_STAT))
         #self.imu.feature_enable("wakeup")
         #self.imu.feature_enable("any_motion")
@@ -348,7 +345,10 @@ class Hardware:
         feat_data[bma423.BMA423_WAKEUP_OFFSET] = 0x03 # enable and sensitivity 2/7
         self.imu.write_data(bma423.BMA4_FEATURE_CONFIG_ADDR, feat_data)
         #print(list(feat_data))
-        self.imu.accel_enable = 1
+        self.imu.advance_power_save = 0
+        bouf[0] = 0x04
+        sensor_i2c.writeto_mem(bma423.BMA4_I2C_ADDR_SECONDARY, bma423.BMA4_POWER_CTRL_ADDR, bouf)
+        #self.imu.accel_enable = 1
         #print(self.imu.int_status())
         #print("BMA internal status:", self.imu.read_byte(bma423.BMA4_INTERNAL_STAT)) # todo: add check for that see if BMA is all good after init
         self.imu_int1 = 0
@@ -378,7 +378,12 @@ class Hardware:
 
         if self.WatchVersion == WATCHV1 or self.WatchVersion == WATCHV3:
             self.vibrator = machine.Pin(4, machine.Pin.OUT)
+            self.vibrator.off() # if we crashed
             self.vibration_controller = None
+            self.feedback1_on = False
+            self.feedback2_on = False
+            _thread.stack_size(256) # do that before EVERY new thread, see Single.py for explanation
+            _thread.start_new_thread(self.feedback_frames, ()) # WATCHV1 and V3 vibration
         else:
             self.vibration_controller = adafruit_drv2605.DRV2605(sensor_i2c)
             self.vibration_controller._write_u8(0x01, 0b10000000) # reset
@@ -387,13 +392,14 @@ class Hardware:
             self.vibration_controller.mode = adafruit_drv2605.MODE_INTTRIG
             self.vibrator = None
 
-        machine.freq(240000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
+        machine.freq(160000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
         self.display_lock.release()
+
 
 
     def get_battery_gauge(self): # 0-127
         if self.WatchVersion == WATCHS3:
-            return self.pmu.getBatteryPercent
+            return self.pmu.getBatteryPercent()
         return self.pmu.getBattPercentage()
 
     def get_battery_voltage(self):
@@ -448,7 +454,7 @@ class Hardware:
             self.pmu.clearIRQ()
         # 0 = Active, 1 = Monitor, 2= Standby, 3= Hibernate
         #comes out of monitor whenever we touch
-        # power mode is NOT documented but this should work
+        # power mode is NOT documented but this should workif self.WatchVersion == WATCHV2: # todo: same section but for WatchS3
         # hibernation of FT6336 is up to 1.5 ma savings (active:4mA, monitor: 1.5mA, hibernate: 50 uA)
         # except lilygo didnt connect the reset pin and we need it to restart the display
         # monitor mode low rate of update good workaround?
@@ -470,21 +476,23 @@ class Hardware:
             self.pmu.setDC3Voltage(Hardware.Vc3V3)
             self.pmu.enablePower(axp202_constants.AXP202_LDO2)
             self.pmu.enablePower(axp202_constants.AXP202_LDO3)
-        if self.WatchVersion == WATCHV2: # todo: same section but for WatchS3
+        if self.WatchVersion == WATCHV2:
             self.pmu.disablePower(axp202_constants.AXP202_EXTEN); # reset touch
-            time.sleep_ms(15)
+            time.sleep_ms(5)
             self.pmu.enablePower(axp202_constants.AXP202_EXTEN);
-            # self.pmu.setLDO3Voltage(3300)
-            # self.pmu.enablePower(axp202_constants.AXP202_LDO3)
-            #time.sleep_ms(20) # wait for potaaytoes to be warmed up
             self.init_ft6336()
-            #self.init_st7789()
+        if self.WatchVersion == WATCHS3:
+            self.pmu.disableDC5() # reset touch
+            time.sleep_ms(5)
+            self.pmu.setDC5Voltage(3300)
+            self.pmu.enableDC5()
+            self.init_ft6336()
         if self.WatchVersion == WATCHV2 or self.WatchVersion == WATCHS3:
             self.vibration_controller._write_u8(0x01, 0b00000000) #exit standby
         self.init_backlight()
         self.display.sleep_mode(False)
         self.display.on()
-        machine.freq(80000000) # no more fast, todo: see other place where this is
+        machine.freq(160000000) # no more fast, todo: see other place where this is
         self.display_lock.release()
         return True
 
@@ -516,7 +524,7 @@ class Hardware:
 
         uend = int(uheight * uwidth) * 2
 
-        if __debug__:
+        if __debug__ and False:
             print("update zone:", fbuf.minX, fbuf.minY, ustart, uend, uwidth, uheight)
 
         tmp_buff = bytearray(uwidth * uheight * 2)
@@ -533,9 +541,9 @@ class Hardware:
             return
         uwidth = min(fbuf.maxX - fbuf.minX, self.DISPLAY_WIDTH)
         buff_mv = memoryview(fbuf.buffer) # we no want copies
-        for half_line in range(int(fbuf.minY / 2), int(fbuf.maxY / 2) - line_off):
+        for half_line in range(int(fbuf.minY / 2), int(fbuf.maxY / 2) - line_off + 1):
             self.display.blit_buffer(buff_mv[(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH + fbuf.minX * 2:(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH + (fbuf.minX + uwidth) * 2], fbuf.minX, half_line * 2 + line_off, uwidth, 1)
-        if __debug__:
+        if __debug__ and False:
             print("blitted zone:", fbuf.minY, fbuf.maxY)
         fbuf.clear_max()
 
@@ -548,7 +556,7 @@ class Hardware:
         #for half_line in range(int(fbuf.minY / 2), int(fbuf.maxY / 2) - line_off):
         #    self.display.blit_buffer(buff_mv[(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH:(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH + self.DISPLAY_WIDTH * 2], 0, half_line * 2 + line_off, Hardware.DISPLAY_WIDTH, 1)
         rline_off = line_off * chunk_size
-        if __debug__:
+        if __debug__ and False:
             print("blitting zone:", fbuf.minY, fbuf.maxY)
         for half_line in range(fbuf.minY, fbuf.maxY - rline_off, chunk_size * 2): # less chunks = more faster
             self.display.blit_buffer(buff_mv[(half_line + rline_off) * 2 * self.DISPLAY_WIDTH:(half_line + rline_off) * 2 * self.DISPLAY_WIDTH + self.DISPLAY_WIDTH * chunk_size * 2], 0, half_line + rline_off, Hardware.DISPLAY_WIDTH, chunk_size)
@@ -604,27 +612,31 @@ class Hardware:
 
     def feedback1(self, _ = None):
         if self.vibrator:
-            self.vibrator.on()
-            _thread.stack_size(64) # just a small thread bro i swear it's my last one bro
-            _thread.start_new_thread(self.feedback_frame, (20,))
+            self.feedback1_on = True
         elif self.vibration_controller:
             self.vibration_controller.sequence[0] = adafruit_drv2605.Effect(2)
             self.vibration_controller.play()
 
     def feedback2(self, _ = None):
         if self.vibrator:
-            self.vibrator.on()
-            _thread.stack_size(64)
-            _thread.start_new_thread(self.feedback_frame, (50,))
+            self.feedback2_on = True
         elif self.vibration_controller:
             self.vibration_controller.sequence[0] = adafruit_drv2605.Effect(1)
             self.vibration_controller.play()
 
-    def feedback_frame(self, tm = 0):
-        if tm > 0:
-            time.sleep_ms(tm)
-        if self.vibrator:
-            self.vibrator.off()
+    def feedback_frames(self): # vibration handler
+        while True:
+            if self.feedback1_on:
+                self.vibrator.on()
+                time.sleep_ms(20)
+                self.vibrator.off()
+                self.feedback1_on = False
+            elif self.feedback2_on:
+                self.vibrator.on()
+                time.sleep_ms(50)
+                self.vibrator.off()
+                self.feedback2_on = False
+            time.sleep(0)
 
     def sync_ntp(self):
         try:
@@ -661,7 +673,7 @@ class Hardware:
 
 
     def process(self):
-        self.feedback_frame() # sometimes that falls over itself so here's a workaround
+        pass
        # if not self.irq_touch_present and self.irq_touch_time + self.RELEASE_TWITCHYNESS < time.ticks_ms() and not self.irq_touch_fired_release:
        #     x = (self.irq_touch_buffer_pos1[0] << 8 | self.irq_touch_buffer_pos1[1]) & 0x0FFF
        #     y = (self.irq_touch_buffer_pos1[2] << 8 | self.irq_touch_buffer_pos1[3]) & 0x0FFF
@@ -688,8 +700,10 @@ class Hardware:
             if self.pmu.isVbusRemoveIrq(): #workaround for brownouts and other bugs when disconnect USB
                 machine.reset()
             if self.pmu.isPekeyShortPressIrq():
+                self.feedback2()
                 Single.Kernel.event(Events.PhysButtonEvent(0))
             if self.pmu.isPekeyLongPressIrq():
+                self.feedback2()
                 Single.Kernel.event(Events.PhysButtonEvent(1.5))
             self.pmu.clearIrqStatus()
             return
@@ -697,8 +711,10 @@ class Hardware:
         if self.pmu.irqbuf[0] & axp202_constants.AXP202_VBUS_REMOVED_IRQ > 0: #workaround for brownouts and other bugs when disconnect USB
             machine.reset()
         if self.pmu.irqbuf[2] & axp202_constants.AXP202_VBUS_REMOVED_IRQ > 0: #actually AXP202_PEK_SHORTPRESS_IRQ!
+            self.feedback2()
             Single.Kernel.event(Events.PhysButtonEvent(0))
         if self.pmu.irqbuf[2] & axp202_constants.AXP202_VBUS_VHOLD_LOW_IRQ > 0: #actually AXP202_PEK_LONGPRESS_IRQ!
+            self.feedback2()
             Single.Kernel.event(Events.PhysButtonEvent(1.5))
         self.pmu.clearIRQ()
 

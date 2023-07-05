@@ -74,6 +74,8 @@ class Kernel:
     def runProgram(self, name, arg):
         if __debug__:
             print("in runProgram for ", name)
+            print("Free Ram:", free(True))
+        self.running_front = -1
         _thread.stack_size(Single.MP_THREAD_STACK_SIZE) # do that before EVERY new thread, see Single.py for explanation
         _thread.start_new_thread(self.runProgram2, (name, arg))
 
@@ -84,11 +86,10 @@ class Kernel:
             #micropython.mem_info(1)
         self.running_lock.acquire()
         try:
+            gc.collect()
             program = __import__("programs." + name, globals(), locals(), [], 0)
             pinstance = getattr(program, name)(_thread.get_ident(), True, arg)
             if __debug__:
-                print("Free Ram status before gc", free(True))
-                gc.collect()
                 print("Free Ram after gc collect", free(True))
                 print("program: ", name)
             self.running.append(pinstance)
@@ -112,11 +113,17 @@ class Kernel:
         except Exception as e:
             print("program", program_instance.id, "is dead reason: ", e)
             sys.print_exception(e)
-            self.stopProgram(program_instance.id)
+            if program_instance.thread == self.thread_0:
+                Single.fucky_wucky = True
+            else:
+                self.stopProgram(program_instance.thread)
         self.loading_program = False
 
 
     def stopProgram(self, id = None):
+        if id == self.thread_0:# dont stop home we need it :(
+            self.event(Events.RunEvent("popup", "cannot kill program 0"))
+            return
         if id == None:
             self.running_lock.acquire()
             if len(self.running) > 0:
@@ -146,6 +153,15 @@ class Kernel:
         self.running_lock.release()
         return False
 
+    def getPrograms(self):
+        programs = []
+        if self.running_lock.acquire():
+            if len(self.running) > 0:
+                for x in range(0, len(self.running)):
+                    programs.append(self.running[x])
+            self.running_lock.release()
+        return programs
+
 
 
     def __init__(self):
@@ -165,6 +181,7 @@ class Kernel:
         self.running = []
         self.running_front = -1 #position in LIST, not thread id
         self.running_lock = _thread.allocate_lock()
+        self.thread_0 = None # so we dont kill the system home
 
 
 
@@ -190,15 +207,14 @@ class Kernel:
             Single.Hardware = self.hardware
             self.framebuffer_array = bytearray(240 * 240 * 2) # 2 byte per pixel)
             self.framebuffer = oframebuf.WPFrameBuffer(self.framebuffer_array, 240, 240, framebuf.RGB565)
-            if not Single.Hardware.WatchVersion == 3: # dont render for WATCHS3 until SPI is fixed as softSPI is too slow and hogs the CPU
-                _thread.stack_size(Single.MP_THREAD_STACK_SIZE)
-                _thread.start_new_thread(self.render_thread, ())
-                _thread.stack_size(Single.MP_THREAD_STACK_SIZE)
-                _thread.start_new_thread(self.blit_thread, ())
+            #if not Single.Hardware.WatchVersion == 3: # dont render for WATCHS3 until SPI is fixed as softSPI is too slow and hogs the CPU
+            _thread.stack_size(Single.MP_THREAD_STACK_SIZE)
+            _thread.start_new_thread(self.render_thread, ())
+            _thread.stack_size(Single.MP_SMALLTHREAD_STACK_SIZE)
+            _thread.start_new_thread(self.blit_thread, ())
             self._lock.release()
-            #self.event(Events.RunEvent("home"))
-            self.event(Events.RunEvent("bad_apple"))
-            while(True):
+            self.event(Events.RunEvent("home"))
+            while(not Single.fucky_wucky):
                 self._lock.acquire()
                 Logger.process()
                 self.process_events()
@@ -214,6 +230,8 @@ class Kernel:
             self.hardware.fucky_wucky(e)
             time.sleep_ms(5000)
         finally:
+            if Single.fucky_wucky:
+                print("Kernel has exited due to the failure of another important thing")
             machine.reset()
 
     ''''@micropython.native
@@ -245,7 +263,10 @@ class Kernel:
             #Single.Hardware.display_lock.acquire() # wait for blitting to finish before starting next frame
             #Single.Hardware.display_lock.release()
             if not self.max_refresh:
-                while time.ticks_ms() - startrender < 50 or self.render_gate == True: # hold 20 fps
+                while time.ticks_diff(time.ticks_add(startrender, 50), time.ticks_ms()) > 0 or self.render_gate == True: # hold 20 fps, good, will not wrap around unless the difference between startrender and time.ticks_ms is very big
+                    time.sleep(0)
+            else:
+                while self.render_gate == True:
                     time.sleep(0)
 
     @micropython.native
@@ -257,7 +278,10 @@ class Kernel:
             self.blit()
             self.render_gate = False
             if not self.max_refresh:
-                while time.ticks_ms() - startblit < 50 or self.render_gate == False: # attempt to hold 20 fps
+                while time.ticks_diff(time.ticks_add(startblit, 50), time.ticks_ms()) > 0 or self.render_gate == False: # attempt to hold 20 fps
+                    time.sleep(0)
+            else:
+                while self.render_gate == False:
                     time.sleep(0)
 
     @micropython.native
@@ -276,8 +300,8 @@ class Kernel:
             #Single.Hardware.blit_buffer_rgb565(self.framebuffer_array)
             #time.sleep(0) # give time to grab lock
             Single.Hardware.display_lock.release()
-        if __debug__:
-            ft = time.ticks_ms() - self.blit_tick
+        if __debug__ and False:
+            ft = time.ticks_ms() - self.blit_tick # bad, shouldltn be done, will wrap around at some point
             if ft > 0:
                 print("took", ft, "ms to blit,", 1000/ft, "fps")
 
@@ -291,8 +315,8 @@ class Kernel:
         self.running_lock.release()
         if app:
             app._do_draw(self.framebuffer)
-        if __debug__:
-            ft = time.ticks_ms() - self.render_tick
+        if __debug__ and False:
+            ft = time.ticks_ms() - self.render_tick # still bad
             if ft > 0:
                 print("took", ft, "ms to render,", 1000/ft, "fps")
 

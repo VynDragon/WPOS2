@@ -5,7 +5,18 @@ import Events
 import Single
 import framebuf, oframebuf
 
-class Button:
+
+class Generic: # monkeypatch draw function on this when instanciating
+    def __init__(self, name = ""):
+        self.name = name
+
+    def event(self, event):
+        pass
+
+    def draw(self, buff):
+        pass
+
+class Button(Generic):
     TOUCH_LAST = 5 # 5 frames
 
     def __init__(self, x, y, w, h, callback = None, name = ""):
@@ -51,7 +62,7 @@ class Button:
             ty = self.y + self.h / 2.0 - Single.DEFAULT_TEXT_RATIO_INV_2
             buff.text(self.name, tx, ty, Single.DEFAULT_TEXT_COLOR)
 
-class Slider:
+class Slider(Generic):
 
     def __init__(self, x, y, w, h, value = 0.5, callback = None, name = ""):
         self.x = x
@@ -87,7 +98,7 @@ class Slider:
         buff.rect(self.x + self.value * self.w, self.y + 0.025, 0.02, self.h - 0.05, Single.DEFAULT_TEXT_COLOR, True)
 
 
-class Switch:
+class Switch(Generic):
     def __init__(self, x, y, w, h, value = False, callback = None, name = ""):
         self.x = x
         self.y = y
@@ -136,7 +147,7 @@ class Switch:
             ty = self.y + self.h / 2.0
             buff.text(self.name, tx, ty, Single.DEFAULT_TEXT_COLOR)
 
-class TextField:
+class TextField(Generic):
     def __init__(self, x, y, w, h, value = "", hide_contents = False, callback = None, name = ""):
         self.x = x
         self.y = y
@@ -170,7 +181,7 @@ class TextField:
         else:
             buff.text(self.value, self.x, self.y + self.h / 2.0 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_TEXT_COLOR)
 
-class Graph:
+class Graph(Generic):
     def __init__(self, x, y, w, h, bg = True, callback = None, name = ""):
         self.x = x
         self.y = y
@@ -207,6 +218,7 @@ class Graph:
         self.draw_buff.vline(self.rw - 2, 0, self.rh, Single.DEFAULT_COLOR)
         self.draw_buff.line(self.rw - 2, int((1.0 - self.last_value) * self.rh), self.rw - 2, int((1.0 - value) * self.rh), color)
         self.last_value = value
+
 
 
 
