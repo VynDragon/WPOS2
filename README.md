@@ -40,3 +40,9 @@ Currently Only T-Watch V1 and T-Watch V2 have been tested, I do not own any V3.
 
 There is something going on with SPI and ESP32S3 version, it's not working for me with ESP-IDF 4.4 and mpy 1.20.0 or mpy master and esp-idf 5.1
 Pin IRQs wont work with esp-idf 4.4, but they work with esp-idf 4.4.5!
+
+## Demo of the render system
+
+[badapple.webm](https://github.com/VynDragon/WPOS2/assets/3176238/f5cddced-452e-42a6-afce-37359ef99bf2)
+
+This uses 2 threads in the kernel and one to feed data and time within a program
