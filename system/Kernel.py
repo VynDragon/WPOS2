@@ -68,6 +68,9 @@ class Kernel:
                             elif this_event.t_program_id == None:
                                 program.event(this_event)
                     self.running_lock.release()
+                if self.loading_program and isinstance(this_event, Events.PhysButtonEvent): # there is something hanging program loading, leave and go back home
+                    self.running_front = 0
+                    self.loading_program = False
         except IndexError as e:
             pass
 
@@ -87,7 +90,12 @@ class Kernel:
         self.running_lock.acquire()
         try:
             gc.collect()
-            program = __import__("programs." + name, globals(), locals(), [], 0)
+            program = None
+            if self.program_cache.get(name) != None:
+                program = self.program_cache[name]
+            else:
+                program = __import__("programs." + name, globals(), locals(), [], 0)
+                self.program_cache[name] = program
             pinstance = getattr(program, name)(_thread.get_ident(), True, arg)
             if __debug__:
                 print("Free Ram after gc collect", free(True))
@@ -98,8 +106,10 @@ class Kernel:
                 print("started ", pinstance)
             self.runningProgram(pinstance)
         except Exception as e:
+            self.loading_program = False
             print("program", name, "couldnt load, reason: ", e)
             sys.print_exception(e)
+            self.event(Events.RunEvent("popup", str(e)))
         self.loading_program = False
         if self.running_lock.locked(): # there is good reason for that
             self.running_lock.release()
@@ -155,11 +165,14 @@ class Kernel:
 
     def getPrograms(self):
         programs = []
-        if self.running_lock.acquire():
-            if len(self.running) > 0:
-                for x in range(0, len(self.running)):
-                    programs.append(self.running[x])
-            self.running_lock.release()
+        try:
+            if self.running_lock.acquire():
+                if len(self.running) > 0:
+                    for x in self.running:
+                        programs.append(x)
+                self.running_lock.release()
+        except:
+            pass
         return programs
 
 
@@ -182,6 +195,8 @@ class Kernel:
         self.running_front = -1 #position in LIST, not thread id
         self.running_lock = _thread.allocate_lock()
         self.thread_0 = None # so we dont kill the system home
+        self.program_cache = {} # cache for alreayd loaded programs
+        self.loading_animation = None
 
 
 
@@ -311,10 +326,18 @@ class Kernel:
         app = None
         self.running_lock.acquire()
         if len(self.running) > 0:
-            app = self.running[self.running_front]
+            try:
+                app = self.running[self.running_front]
+            except Exception as e:
+                self.running_front = -1
+                print(e)
         self.running_lock.release()
         if app:
-            app._do_draw(self.framebuffer)
+            try:
+                app._do_draw(self.framebuffer)
+            except Exception as e:
+                print(e)
+                self.event(Events.RunEvent("popup", str(e)))
         if __debug__ and False:
             ft = time.ticks_ms() - self.render_tick # still bad
             if ft > 0:
@@ -322,4 +345,17 @@ class Kernel:
 
     def render_loading_program(self):
         self.framebuffer.fill(0) # fill doesnt set boundaries in buffer
+        if not self.loading_animation:
+            with open("/system/loading.bw.gz") as the_video:
+                import zlib
+                self.loading_animation = memoryview(bytearray(zlib.DecompIO(the_video, 31).read()))
+            self.loading_animation_frame = 0
+            self.loading_animation_palette = oframebuf.WPPalette()
+            self.loading_animation_framesize = int(120*120/8)
+            self.loading_animation_frame
+        tmpbuf = oframebuf.FrameBuffer(self.loading_animation[ self.loading_animation_framesize * self.loading_animation_frame:], 120, 120, framebuf.MONO_HLSB)
+        self.framebuffer.blit(tmpbuf, 0.25, 0.25, 0, self.loading_animation_palette)
+        self.loading_animation_frame += 1
+        if self.loading_animation_frame >= 60:
+            self.loading_animation_frame = 0
         self.framebuffer.text("LOADING", 0.5 - Single.DEFAULT_TEXT_RATIO_INV * 3.5, 0.5 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_TEXT_COLOR)

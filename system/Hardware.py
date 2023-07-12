@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-import machine, micropython, json, time, _thread, network, os
+import machine, micropython, json, time, ntptime, _thread, network, os
 import Logger
 import st7789, axp202, axp202_constants, ft6x36, pcf8563, bma423, adafruit_drv2605, AXP2101
 import TextMode
@@ -24,8 +24,8 @@ class Hardware:
     Vc3V3 = 3300 # we brownout often when disconnecting USB at lower voltages, workaround is resetting the device when USB disconnect
     Vc3V3S3 = 3300
     #Vc3V3 = 3300
-    DISPLAY_WIDTH = 240
-    DISPLAY_HEIGHT = 240
+    DISPLAY_WIDTH = Single.DISPLAY_WIDTH
+    DISPLAY_HEIGHT = Single.DISPLAY_HEIGHT
     #RELEASE_TWITCHYNESS = 100 dont need anymore since we figured the touchscreen already does that, contrary to our driver
     BACKLIGHT_PWM_DEFAULT = int(8192)
 
@@ -68,9 +68,7 @@ class Hardware:
         if self.WatchVersion != WATCHS3:
             display_spi = machine.SPI(1)
             display_spi.deinit()
-            display_spi = machine.SPI(2)
-            display_spi.deinit()
-        elif self.WatchVersion == WATCHS3:
+        if self.WatchVersion == WATCHS3:
             cs = machine.Pin(12, machine.Pin.OUT)
             dc = machine.Pin(38, machine.Pin.OUT)
             #display_spi = machine.SoftSPI(baudrate=800000,sck=machine.Pin(18, machine.Pin.OUT),mosi=machine.Pin(13, machine.Pin.OUT), miso=machine.Pin(9)) # still init as softSPI, if you REALLY need to write to the screen you can force it to refresh (it will take ages and the other programs will be unhappy)
@@ -82,7 +80,10 @@ class Hardware:
         else:
             cs = machine.Pin(5, machine.Pin.OUT)
             dc = machine.Pin(27, machine.Pin.OUT)
-            display_spi = machine.SPI(2,baudrate=60000000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,sck=machine.Pin(18),mosi=machine.Pin(19), miso=machine.Pin(23)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
+            if self.WatchVersion != WATCHV2:
+                display_spi = machine.SPI(1,baudrate=80000000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,sck=machine.Pin(18),mosi=machine.Pin(19), miso=machine.Pin(23)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
+            else:
+                display_spi = machine.SPI(1,baudrate=40000000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,sck=machine.Pin(18),mosi=machine.Pin(19), miso=machine.Pin(23))
             #display_spi = machine.SPI(2,baudrate=80000000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,sck=machine.Pin(18),mosi=machine.Pin(19))
             #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
             #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
@@ -203,11 +204,11 @@ class Hardware:
         pin37 = machine.Pin(37, machine.Pin.IN) #irq external rtc
         pin39 = machine.Pin(39, machine.Pin.IN) #irq IMU
         pin35 = machine.Pin(35, machine.Pin.IN) #irq axp202
-        #esp32.wake_on_ext1((pin35, pin39, pin38, pin37), esp32.WAKEUP_ANY_HIGH)
-        #esp32.wake_on_ext0(pin35, esp32.WAKEUP_ALL_LOW)
         pin35.irq(self.irq_pmu, trigger=machine.Pin.IRQ_FALLING, wake=machine.DEEPSLEEP | machine.SLEEP)
         pin38.irq(self.irq_touch, trigger= machine.Pin.IRQ_RISING)
         pin39.irq(self.irq_imu, trigger= machine.Pin.IRQ_RISING, wake=machine.DEEPSLEEP | machine.SLEEP)
+        esp32.wake_on_ext1((pin39,), esp32.WAKEUP_ANY_HIGH) # necessary or it doesnt actually wake
+        esp32.wake_on_ext0(pin35, esp32.WAKEUP_ALL_LOW)
         #print("pin 39 is", pin39.value())
 
         self.irq_touch_buffer_pos1 = bytearray(4) #pre-allocation
@@ -226,6 +227,8 @@ class Hardware:
         pin21.irq(self.irq_pmu, trigger=machine.Pin.IRQ_FALLING, wake=machine.DEEPSLEEP | machine.SLEEP)
         pin16.irq(self.irq_touch, trigger= machine.Pin.IRQ_RISING)
         pin14.irq(self.irq_imu, trigger= machine.Pin.IRQ_RISING, wake=machine.DEEPSLEEP | machine.SLEEP)
+        esp32.wake_on_ext1((pin14,), esp32.WAKEUP_ANY_HIGH)
+        esp32.wake_on_ext0(pin21, esp32.WAKEUP_ALL_LOW)
 
         self.irq_touch_buffer_pos1 = bytearray(4) #pre-allocation
         self.irq_touch_buffer_pos2 = bytearray(4)
@@ -275,8 +278,9 @@ class Hardware:
             time.sleep_ms(20)
 
         self.init_st7789()
-
         self.init_backlight()
+
+        self.display_lock.release()
 
         Logger.log("CPU frequ: " + str(machine.freq()))
         Logger.log("Flash Size: " + str(esp.flash_size()))
@@ -392,8 +396,7 @@ class Hardware:
             self.vibration_controller.mode = adafruit_drv2605.MODE_INTTRIG
             self.vibrator = None
 
-        machine.freq(160000000) #todo: set to user value (give a slider with choice between 240, 160, and 80 mhz?)
-        self.display_lock.release()
+        self.set_freq()
 
 
 
@@ -477,9 +480,9 @@ class Hardware:
             self.pmu.enablePower(axp202_constants.AXP202_LDO2)
             self.pmu.enablePower(axp202_constants.AXP202_LDO3)
         if self.WatchVersion == WATCHV2:
-            self.pmu.disablePower(axp202_constants.AXP202_EXTEN); # reset touch
+            self.pmu.disablePower(axp202_constants.AXP202_EXTEN) # reset touch
             time.sleep_ms(5)
-            self.pmu.enablePower(axp202_constants.AXP202_EXTEN);
+            self.pmu.enablePower(axp202_constants.AXP202_EXTEN)
             self.init_ft6336()
         if self.WatchVersion == WATCHS3:
             self.pmu.disableDC5() # reset touch
@@ -492,9 +495,18 @@ class Hardware:
         self.init_backlight()
         self.display.sleep_mode(False)
         self.display.on()
-        machine.freq(160000000) # no more fast, todo: see other place where this is
+        self.set_freq()
         self.display_lock.release()
         return True
+
+    def set_freq(self):
+        sObject = Single.Settings.getSettingObject(Single.Settings.hardware)
+        if sObject == None:
+            sObject = {}
+        freq = sObject.get("Freq")
+        if freq == None:
+            freq = 80000000
+        machine.freq(freq)
 
     def blit_buffer_rgb565(self, array):
         self.display.blit_buffer(array, 0, 0, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT) # O(1) for the whole render pipeline with that, but quite slow... but not much more than even a simple direct draw
@@ -539,12 +551,22 @@ class Hardware:
     def blit_framebuffer_rgb565_halfmode1(self, fbuf: oframebuf.WPFrameBuffer, line_off: int = 0): # blit only half the screen, line_off 0 or 1
         if fbuf.minX == None: # drew nothing
             return
+        #fbuf.minY -= fbuf.minY % 2
+        #fbuf.maxY += fbuf.maxY % 2
+        if fbuf.minX < 0:
+            fbuf.minX = 0
+        elif fbuf.maxX > self.DISPLAY_WIDTH:
+            fbuf.maxX = self.DISPLAY_WIDTH
+        if fbuf.minY < 0:
+            fbuf.minY = 0
+        elif fbuf.maxY > self.DISPLAY_HEIGHT:
+            fbuf.maxY = self.DISPLAY_HEIGHT
         uwidth = min(fbuf.maxX - fbuf.minX, self.DISPLAY_WIDTH)
         buff_mv = memoryview(fbuf.buffer) # we no want copies
-        for half_line in range(int(fbuf.minY / 2), int(fbuf.maxY / 2) - line_off + 1):
-            self.display.blit_buffer(buff_mv[(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH + fbuf.minX * 2:(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH + (fbuf.minX + uwidth) * 2], fbuf.minX, half_line * 2 + line_off, uwidth, 1)
+        for half_line in range(fbuf.minY + line_off, fbuf.maxY, 2):
+            self.display.blit_buffer(buff_mv[half_line * 2 * self.DISPLAY_WIDTH + fbuf.minX * 2:half_line * 2 * self.DISPLAY_WIDTH + (fbuf.minX + uwidth) * 2], fbuf.minX, half_line, uwidth, 1)
         if __debug__ and False:
-            print("blitted zone:", fbuf.minY, fbuf.maxY)
+            print("blitted zone:", fbuf.minY, fbuf.maxY, fbuf.minX, fbuf.maxX)
         fbuf.clear_max()
 
 
@@ -556,7 +578,7 @@ class Hardware:
         #for half_line in range(int(fbuf.minY / 2), int(fbuf.maxY / 2) - line_off):
         #    self.display.blit_buffer(buff_mv[(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH:(half_line * 2 + line_off) * 2 * self.DISPLAY_WIDTH + self.DISPLAY_WIDTH * 2], 0, half_line * 2 + line_off, Hardware.DISPLAY_WIDTH, 1)
         rline_off = line_off * chunk_size
-        if __debug__ and False:
+        if __debug__:
             print("blitting zone:", fbuf.minY, fbuf.maxY)
         for half_line in range(fbuf.minY, fbuf.maxY - rline_off, chunk_size * 2): # less chunks = more faster
             self.display.blit_buffer(buff_mv[(half_line + rline_off) * 2 * self.DISPLAY_WIDTH:(half_line + rline_off) * 2 * self.DISPLAY_WIDTH + self.DISPLAY_WIDTH * chunk_size * 2], 0, half_line + rline_off, Hardware.DISPLAY_WIDTH, chunk_size)
@@ -592,9 +614,16 @@ class Hardware:
             time.sleep(0)
 
 
-    def releaseAudio(self, blocking = True, timeout = -1):
-        if self.audio_lock.acquire(blocking, timeout):
-            self.audio.deinit()
+    def releaseAudio(self, force = False):
+        if self.audio_lock.acquire():
+            if self.audio:
+                self.audio.deinit()
+            self.audio = None
+            self.audio_lock.release()
+            return True
+        elif force == True:
+            if self.audio:
+                self.audio.deinit()
             self.audio = None
             self.audio_lock.release()
             return True
@@ -692,7 +721,29 @@ class Hardware:
             Single.Kernel.event(Events.IMUEvent(self.imu_int1))
 
     def irq_pmu(self, pin):
-        micropython.schedule(self.irq_pmu_process, pin)
+        #micropython.schedule(self.irq_pmu_process, pin)
+        if self.WatchVersion == WATCHS3:
+            self.pmu.getIrqStatus()
+            if self.pmu.isVbusRemoveIrq(): #workaround for brownouts and other bugs when disconnect USB
+                machine.reset()
+            if self.pmu.isPekeyShortPressIrq():
+                self.feedback2()
+                Single.Kernel.event(Events.PhysButtonEvent(0))
+            if self.pmu.isPekeyLongPressIrq():
+                self.feedback2()
+                Single.Kernel.event(Events.PhysButtonEvent(1.5))
+            self.pmu.clearIrqStatus()
+            return
+        self.pmu.readIRQ()
+        if self.pmu.irqbuf[0] & axp202_constants.AXP202_VBUS_REMOVED_IRQ > 0: #workaround for brownouts and other bugs when disconnect USB
+            machine.reset()
+        if self.pmu.irqbuf[2] & axp202_constants.AXP202_VBUS_REMOVED_IRQ > 0: #actually AXP202_PEK_SHORTPRESS_IRQ!
+            self.feedback2()
+            Single.Kernel.event(Events.PhysButtonEvent(0))
+        if self.pmu.irqbuf[2] & axp202_constants.AXP202_VBUS_VHOLD_LOW_IRQ > 0: #actually AXP202_PEK_LONGPRESS_IRQ!
+            self.feedback2()
+            Single.Kernel.event(Events.PhysButtonEvent(1.5))
+        self.pmu.clearIRQ()
 
     def irq_pmu_process(self, pin):
         if self.WatchVersion == WATCHS3:
@@ -720,8 +771,6 @@ class Hardware:
 
 
     def irq_touch(self, pin):
-        #if self.display_lock.locked(): # dont query display it is *busy*
-        #    return
         if not self.irq_touch_present:
             try:
                 self.touch._i2c.readfrom_mem_into(self.touch._address, ft6x36._P1_XH_REG, self.irq_touch_buffer_pos1) #save positions at time of irq, processing it fast is not guratanteed
@@ -738,7 +787,6 @@ class Hardware:
                 print(e)
 
     def irq_touch_process(self, pin):
-        self.irq_touch_present = False
         x = (self.irq_touch_buffer_pos1[0] << 8 | self.irq_touch_buffer_pos1[1]) & 0x0FFF
         y = (self.irq_touch_buffer_pos1[2] << 8 | self.irq_touch_buffer_pos1[3]) & 0x0FFF
         tevent = (self.irq_touch_buffer_pos1[0] & 0xC0) >> 6# driver isnt doing that... actually stupid
@@ -766,6 +814,7 @@ class Hardware:
 
             Single.Kernel.event(Events.ReleaseEvent(float(x) / float(Hardware.DISPLAY_WIDTH), float(y) / float(Hardware.DISPLAY_HEIGHT)))
             self.feedback1()
+        self.irq_touch_present = False
 
     def fucky_wucky(self, e): # try to print exception to display
         from TextMode import TextMode_st7789
@@ -813,7 +862,8 @@ class Hardware:
                 while self.wifi.status() == network.STAT_CONNECTING:
                     time.sleep(0)
                 if self.wifi.status() == network.STAT_GOT_IP:
-                    self.wifi.config(pm=self.wifi.PM_POWERSAVE)
+                    if self.WatchVersion < WATCHS3:
+                        self.wifi.config(pm=self.wifi.PM_POWERSAVE)
                     return self.wifi
         return None
 

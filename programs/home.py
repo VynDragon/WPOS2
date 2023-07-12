@@ -5,11 +5,13 @@ import Events
 import _thread
 import time, ntptime, math
 from fonts import led_32
+import programs.programs as programs_data
+import machine
 
 
 def mode1_outline(buff):
-    buff.rect(0.1, 0.1, 0.8, 0.8, Single.DEFAULT_BG_COLOR, True)
-    buff.rect(0.1, 0.1, 0.8, 0.8, Single.DEFAULT_OUTLINE_COLOR, False)
+    buff.rect(0.05, 0.1, 0.9, 0.8, Single.DEFAULT_BG_COLOR, True)
+    buff.rect(0.05, 0.1, 0.9, 0.8, Single.DEFAULT_OUTLINE_COLOR, False)
 
 
 class home(Program):
@@ -27,6 +29,8 @@ class home(Program):
         self.mode1_context = None
         self.mode1_lock = _thread.allocate_lock()
         self.lastSleepCounterIncrease = time.ticks_ms()
+        self.mode2_lock = _thread.allocate_lock()
+        self.mode2_page = 0
 
 
     def start(self):
@@ -37,6 +41,7 @@ class home(Program):
             Single.Hardware.sync_ntp()
         Single.Hardware.releaseWifi()
         self.ampgraph = PTRS.Graph(0.0, Single.DEFAULT_TEXT_RATIO_INV + 1/Single.Hardware.DISPLAY_HEIGHT, 1.0, 0.22)
+        self.open_mode2 = PTRS.Button(0.6, 0.6, 0.3, 0.3, callback = lambda: self.init_mode2() , name = "Programs")
         self.sleep_counter = 0
         Single.Kernel.thread_0 = self.thread
 
@@ -65,12 +70,47 @@ class home(Program):
         program_y = 0.1 + pix_y
         for program in programs:
             thread_copy = program.thread # copy not assignement so lambda remembers the right number
-            classname_copy = "{}#{}".format(program.__class__.__name__, thread_copy) # basically program name
-            self.mode1_context.append(PTRS.Button(0.1 + pix_x, program_y, 0.6, Single.DEFAULT_TEXT_RATIO_INV * 4, callback = lambda: self.mode1_switch(thread_copy) , name = classname_copy))
-            self.mode1_context.append(PTRS.Button(0.7, program_y, 0.2 - pix_x, Single.DEFAULT_TEXT_RATIO_INV * 4, callback = lambda: self.mode1_stop(thread_copy) , name = "X"))
-            program_y += Single.DEFAULT_TEXT_RATIO_INV * 4
+            classname= "{}#{}".format(program.__class__.__name__, thread_copy) # basically program name
+            self.mode1_context.append(PTRS.Button(0.05 + pix_x, program_y, 0.65, Single.DEFAULT_TEXT_RATIO_INV * 8, callback = lambda thread=thread_copy: self.mode1_switch(thread) , name = classname))
+            self.mode1_context.append(PTRS.Button(0.7, program_y, 0.25 - pix_x, Single.DEFAULT_TEXT_RATIO_INV * 8, callback = lambda thread=thread_copy: self.mode1_stop(thread) , name = "X"))
+            program_y += Single.DEFAULT_TEXT_RATIO_INV * 8
         self.mode1_lock.release()
         self.mode = 1
+
+    def mode2_run(self, name):
+        Single.Kernel.event(Events.RunEvent(name))
+        self.mode2_leave()
+
+    def mode2_leave(self):
+        self.mode = 0
+
+    def mode2_nextpage(self):
+        self.mode2_context = self.mode2_context[0:2]
+        self.mode2_page += 1
+        if len(programs_data.programs_list) >= self.mode2_page * 4 + 1:
+            self.init_mode2_page(self.mode2_page)
+        else:
+            self.mode2_page = 0
+
+    def init_mode2_page(self, page):
+        program_y = 0.0
+        leftprogram = min(4, len(programs_data.programs_list) - page*4)
+        for program in programs_data.programs_list[page * 4:page*4+leftprogram]:
+            self.mode2_context.append(PTRS.Button(0.0, program_y, Single.DEFAULT_TEXT_RATIO_INV * 16.0, 0.25, callback = lambda name=program: self.mode2_run(name) , name = program))
+            program_y += 0.25
+            if program_y > 1.0:
+                program_y = 0.0
+            if __debug__:
+                print("added:", program, program_y)
+
+    def init_mode2(self):
+        self.mode2_lock.acquire()
+        self.mode2_context = []
+        self.mode2_context.append(PTRS.Button(0.6, 0.6, 0.3, 0.3, callback = lambda: self.mode2_leave(), name = "Programs"))
+        self.mode2_context.append(PTRS.Button(0.6, 0.1, 0.3, 0.3, callback = lambda: self.mode2_nextpage(), name = "Next"))
+        self.init_mode2_page(self.mode2_page)
+        self.mode2_lock.release()
+        self.mode = 2
 
 
     def think(self):
@@ -85,8 +125,13 @@ class home(Program):
                     elif self.mode == 1 and event.gesture == 3:
                         self.mode = 0
                         Single.Kernel.switchProgram()
+                elif self.mode == 0:
+                    self.open_mode2.event(event)
                 elif self.mode == 1:
                     for elem in self.mode1_context:
+                        elem.event(event)
+                elif self.mode == 2:
+                    for elem in self.mode2_context:
                         elem.event(event)
         except IndexError:
             if time.ticks_diff(time.ticks_add(self.lastSleepCounterIncrease, 100), time.ticks_ms()) <= 0:
@@ -101,17 +146,22 @@ class home(Program):
             self.mv = Single.Hardware.get_battery_voltage()
             self.ma = Single.Hardware.get_battery_current()
             if Single.Hardware.WatchVersion == 3:
-                self.ampgraph.add_point(self.mv / 4200.0) # trace voltage instead we cant measure current
+                self.ampgraph.add_point(self.percent / 100.0) # trace % instead we cant measure current
             else:
                 self.ampgraph.add_point(self.ma / 80.0)
             self.lastGraphUpdate = time.ticks_ms()
         time.sleep(0)
 
     def sleep_callback(self):
-        time.sleep(0)
-        self.ma = Single.Hardware.get_battery_current()
-        self.ampgraph.add_point(self.ma / 80.0, Single.DEFAULT_BG_COLOR)
-        try:
+        if not Single.Hardware.WatchVersion > 0: # only if we didnt reset and wait 5 ms for the touch screen to wake up
+            time.sleep_ms(5) #let events get there
+        if Single.Hardware.WatchVersion == 3:
+            self.percent = Single.Hardware.get_battery_gauge()
+            self.ampgraph.add_point(self.percent / 100.0) # trace % instead we cant measure current
+        else:
+            self.ma = Single.Hardware.get_battery_current()
+            self.ampgraph.add_point(self.ma / 80.0, Single.DEFAULT_BG_COLOR)
+        '''try:
             while True: #event treatment
                 event = self.input.popleft()
                 if isinstance(event, Events.IMUEvent):
@@ -121,7 +171,10 @@ class home(Program):
                     return False
 
         except IndexError:
-            pass
+            pass'''
+        if machine.wake_reason() == machine.EXT0_WAKE or machine.wake_reason() == machine.EXT1_WAKE:
+            self.sleep_counter = 0
+            return False
         return True
 
 
@@ -160,6 +213,7 @@ class home(Program):
         #buff.hline(0.0, 0.25, 1.0, Single.DEFAULT_OUTLINE_COLOR)
         curtime = time.gmtime()
         if curtime[5] != self.lastSeconds: # update those only once per second
+            buff.fill(0)
             onthtw = 1.0/(Single.Hardware.DISPLAY_WIDTH/32.0)
             onthth = 1.0/(Single.Hardware.DISPLAY_HEIGHT/32.0)
             buff.rect(0, Single.DEFAULT_TEXT_RATIO_INV, 1.0, 0.5 - Single.DEFAULT_TEXT_RATIO_INV_2, Single.DEFAULT_BG_COLOR, True)
@@ -176,15 +230,22 @@ class home(Program):
         buff.hline(0.0, Single.DEFAULT_TEXT_RATIO_INV, 1.0, Single.DEFAULT_OUTLINE_COLOR)
         self.rightometer(buff, 0.25, 0.75)
         buff.text("{}/{}/{}".format(curtime[2],curtime[1],curtime[0]), 0.5 - Single.DEFAULT_TEXT_RATIO_INV_2 * 10.0,0.5, Single.DEFAULT_TEXT_COLOR)
+        self.open_mode2.draw(buff)
 
     @micropython.native
     def draw(self, buff):
         if self.mode == 0:
             self.draw_watchface(buff)
-        if self.mode == 1:
+        elif self.mode == 1:
             buff.fill(0) # remeber this doesnt set boundaries of the fb so
             if self.mode1_lock.acquire():
                 for elem in self.mode1_context:
                     elem.draw(buff)
                 self.mode1_lock.release()
+        elif self.mode == 2:
+            buff.fill(0)
+            if self.mode2_lock.acquire():
+                for elem in self.mode2_context:
+                    elem.draw(buff)
+                self.mode2_lock.release()
 

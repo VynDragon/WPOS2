@@ -1,5 +1,6 @@
 mpremote fs mkdir :/system
 mpremote resume fs cp system/*.py :/system/
+mpremote resume fs cp system/*.gz :/system/
 mpremote resume fs mkdir :/programs
 mpremote resume fs cp programs/*.py :/programs/
 mpremote resume fs cp *.py :

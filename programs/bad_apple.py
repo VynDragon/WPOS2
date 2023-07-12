@@ -63,7 +63,7 @@ class bad_apple(Program):
     def stop(self):
         #self.update_timer.deinit()
         #Single.Hardware.releaseAudio()
-        machine.freq(80000000)
+        Single.Hardware.set_freq()
 
     #@micropython.native
     def resize_fill_buffer_video(self):

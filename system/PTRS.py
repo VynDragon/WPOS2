@@ -32,7 +32,7 @@ class Button(Generic):
             self.callback = self.default_callback
 
     def default_callback(self):
-        Single.Kernel.event(ButtonEvent(self))
+        Single.Kernel.event(Events.ButtonEvent(self))
 
     @micropython.native
     def event(self, event):
@@ -58,7 +58,7 @@ class Button(Generic):
         self.touching_timeout += 1
         textlen = float(len(self.name))
         if textlen > 0.0:
-            tx = self.x + self.w / 2.0 - (1.0/Single.DEFAULT_TEXT_RATIO * textlen / 2.0)
+            tx = self.x + self.w / 2.0 - Single.DEFAULT_TEXT_RATIO_INV_2 * textlen
             ty = self.y + self.h / 2.0 - Single.DEFAULT_TEXT_RATIO_INV_2
             buff.text(self.name, tx, ty, Single.DEFAULT_TEXT_COLOR)
 
@@ -218,6 +218,57 @@ class Graph(Generic):
         self.draw_buff.vline(self.rw - 2, 0, self.rh, Single.DEFAULT_COLOR)
         self.draw_buff.line(self.rw - 2, int((1.0 - self.last_value) * self.rh), self.rw - 2, int((1.0 - value) * self.rh), color)
         self.last_value = value
+
+
+class Scrollable(Generic):
+    def __init__(self, x, y, w, h, w_mul = 1, h_mul = 2, name = ""):
+        self.x = x
+        self.y = y
+        self.w = w
+        self.w_mul = w_mul
+        self.h_mul = h_mul
+        self.rw = int(w * Single.Hardware.DISPLAY_WIDTH)
+        self.h = h
+        self.rh = int(h * Single.Hardware.DISPLAY_HEIGHT)
+        self.name = name
+        self.offset_x = 0.0
+        self.offset_y = 0.0
+        self.last_touch = (0,0)
+        self.elements = []
+
+    @micropython.native
+    def event(self, event):
+        if isinstance(event, Events.ReleaseEvent):
+            if event.x > self.x and event.x < self.x + self.w and event.y > self.y and event.y < self.y + self.h:
+                diffx = event.x - self.last_touch[0]
+                diffy = event.y - self.last_touch[1]
+                self.offset_x -= diffx
+                self.offset_y -= diffy
+                if self.offset_x > 0:
+                    self.offset_x = 0
+                elif self.offset_x < - self.w * (self.w_mul - 1):
+                    self.offset_x = - self.w * (self.w_mul - 1)
+                if self.offset_y > 0:
+                    self.offset_y = 0
+                elif self.offset_y <  - self.h * (self.h_mul - 1):
+                    self.offset_y = - self.h * (self.h_mul - 1)
+                else:
+                    for element in self.elements:
+                        element.event(event)
+        if isinstance(event, Events.TouchEvent):
+            if event.x > self.x and event.x < self.x + self.w and event.y > self.y and event.y < self.y + self.h:
+                self.last_touch = (event.x, event.y)
+
+    @micropython.native
+    def draw(self, buff):
+        for elem in self.elements:
+            elem.draw(self.draw_buff)
+        buff.blit(self.draw_buff, self.x + self.offset_x, self.y + self.offset_y)
+
+    def add_element(self, element: Generic):
+        self.elements.append(element)
+
+
 
 
 
