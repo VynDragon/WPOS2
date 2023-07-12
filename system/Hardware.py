@@ -222,7 +222,7 @@ class Hardware:
         pin16 = machine.Pin(16, machine.Pin.IN) #irq touch
         pin17 = machine.Pin(17, machine.Pin.IN) #irq external rtc
         pin14 = machine.Pin(14, machine.Pin.IN) #irq IMU
-        pin21 = machine.Pin(21, machine.Pin.IN, machine.Pin.PULL_UP, drive=machine.Pin.DRIVE_0) #irq axp2101, 1.8v doesnt register as high in micropython and we cant change that
+        pin21 = machine.Pin(21, machine.Pin.IN, machine.Pin.PULL_UP, drive=machine.Pin.DRIVE_0, hold=True) #irq axp2101, 1.8v doesnt register as high in micropython and we cant change that
         #print("axp irq value:", pin21.value())
         pin21.irq(self.irq_pmu, trigger=machine.Pin.IRQ_FALLING, wake=machine.DEEPSLEEP | machine.SLEEP)
         pin16.irq(self.irq_touch, trigger= machine.Pin.IRQ_RISING)
