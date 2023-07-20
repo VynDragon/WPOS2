@@ -50,6 +50,7 @@ class Kernel:
         try:
             while True:
                 this_event = self.input.popleft()
+                self.last_event_time = time.ticks_ms()
                 if __debug__:
                     print("processing ", this_event)
                 if isinstance(this_event, Events.RunEvent):
@@ -197,6 +198,7 @@ class Kernel:
         self.thread_0 = None # so we dont kill the system home
         self.program_cache = {} # cache for alreayd loaded programs
         self.loading_animation = None
+        self.last_event_time = time.ticks_ms()
 
 
 

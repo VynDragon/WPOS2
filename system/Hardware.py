@@ -21,8 +21,8 @@ WATCHS3 = int(3)
 # also everything that has to do with hardware probably should be lbyl
 
 class Hardware:
-    Vc3V3 = 3300 # we brownout often when disconnecting USB at lower voltages, workaround is resetting the device when USB disconnect
-    Vc3V3S3 = 3300
+    Vc3V3 = 2800 # we brownout often when disconnecting USB at lower voltages, workaround is resetting the device when USB disconnect
+    Vc3V3S3 = 2800
     #Vc3V3 = 3300
     DISPLAY_WIDTH = Single.DISPLAY_WIDTH
     DISPLAY_HEIGHT = Single.DISPLAY_HEIGHT
@@ -216,7 +216,7 @@ class Hardware:
         self.irq_touch_present = False
         #self.irq_touch_time = 0
         #self.irq_touch_fired_release = True
-        self.irq_feedback_present = False
+        #self.irq_feedback_present = False
 
     def init_irq_s3(self):
         pin16 = machine.Pin(16, machine.Pin.IN) #irq touch
@@ -233,7 +233,6 @@ class Hardware:
         self.irq_touch_buffer_pos1 = bytearray(4) #pre-allocation
         self.irq_touch_buffer_pos2 = bytearray(4)
         self.irq_touch_present = False
-        self.irq_feedback_present = False
 
     def init_backlight(self):
         sObject = Single.Settings.getSettingObject(Single.Settings.hardware)
@@ -427,6 +426,7 @@ class Hardware:
         if self.WatchVersion == WATCHS3:
             if self.pmu.isVbusIn() and not force:
                 return False
+            #pass
         else:
             if self.pmu.isVBUSPlug() and not force: # are we plugged in?
                 return False
@@ -442,13 +442,15 @@ class Hardware:
         # seems like to get more speed would need to do quite a lot on the C side of things
             else:
                 return False
-        machine.freq(240000000) # go fastly to go to sleep faster
         self.display.off() # unnecessary if pwm backlight
         self.display.sleep_mode(True)
         self.pwm_backlight.deinit()
         if self.WatchVersion == WATCHV2 or self.WatchVersion == WATCHS3:
             self.touch.power_mode = 3
             self.vibration_controller._write_u8(0x01, 0b01000000) # standby
+        if self.WatchVersion == WATCHS3:
+            pin16 = machine.Pin(16, machine.Pin.IN)
+            pin16.irq(None, trigger= machine.Pin.IRQ_RISING)
         if self.WatchVersion != WATCHS3:
             self.pmu.disablePower(axp202_constants.AXP202_LDO4)
             self.pmu.disablePower(axp202_constants.AXP202_DCDC2)
@@ -461,6 +463,7 @@ class Hardware:
         # hibernation of FT6336 is up to 1.5 ma savings (active:4mA, monitor: 1.5mA, hibernate: 50 uA)
         # except lilygo didnt connect the reset pin and we need it to restart the display
         # monitor mode low rate of update good workaround?
+        machine.freq(80000000)
         if self.WatchVersion == WATCHV1:
             self.touch.power_mode = 1
         should_sleep = True
@@ -490,6 +493,8 @@ class Hardware:
             self.pmu.setDC5Voltage(3300)
             self.pmu.enableDC5()
             self.init_ft6336()
+            pin16 = machine.Pin(16, machine.Pin.IN)
+            pin16.irq(self.irq_touch, trigger= machine.Pin.IRQ_RISING)
         if self.WatchVersion == WATCHV2 or self.WatchVersion == WATCHS3:
             self.vibration_controller._write_u8(0x01, 0b00000000) #exit standby
         self.init_backlight()

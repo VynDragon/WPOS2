@@ -26,7 +26,7 @@ class Button(Generic):
         self.h = h
         self.name = name
         self.touching = False
-        self.touching_timeout = 0
+        self.touching_timeout = 5
         self.callback = callback
         if callback == None:
             self.callback = self.default_callback
@@ -39,17 +39,14 @@ class Button(Generic):
         if isinstance(event, Events.ReleaseEvent):
             if event.x > self.x and event.x < self.x + self.w and event.y > self.y and event.y < self.y + self.h:
                 self.callback()
-            self.touching = False
+                self.touching_timeout = 0
         if isinstance(event, Events.TouchEvent):
             if event.x > self.x and event.x < self.x + self.w and event.y > self.y and event.y < self.y + self.h:
-                self.touching = True
                 self.touching_timeout = 0
-            else:
-                self.touching = False
 
     @micropython.native
     def draw(self, buff):
-        if self.touching and self.touching_timeout < Button.TOUCH_LAST:
+        if self.touching_timeout < Button.TOUCH_LAST:
             buff.rect(self.x, self.y, self.w, self.h, Single.DEFAULT_OUTLINE_COLOR, True)
             buff.rect(self.x, self.y, self.w, self.h, Single.DEFAULT_COLOR, False)
         else:

@@ -15,8 +15,7 @@ def mode1_outline(buff):
 
 
 class home(Program):
-
-    cycle_sleep = 50
+    sleep_timeout = 10000 #ms
 
     def __init__(self, id = None, draw = False, arg = None):
         super().__init__(id, True)
@@ -28,7 +27,6 @@ class home(Program):
         self.lastGraphUpdate = time.ticks_ms()
         self.mode1_context = None
         self.mode1_lock = _thread.allocate_lock()
-        self.lastSleepCounterIncrease = time.ticks_ms()
         self.mode2_lock = _thread.allocate_lock()
         self.mode2_page = 0
 
@@ -42,7 +40,6 @@ class home(Program):
         Single.Hardware.releaseWifi()
         self.ampgraph = PTRS.Graph(0.0, Single.DEFAULT_TEXT_RATIO_INV + 1/Single.Hardware.DISPLAY_HEIGHT, 1.0, 0.22)
         self.open_mode2 = PTRS.Button(0.6, 0.6, 0.3, 0.3, callback = lambda: self.init_mode2() , name = "Programs")
-        self.sleep_counter = 0
         Single.Kernel.thread_0 = self.thread
 
     def stop(self):
@@ -117,7 +114,6 @@ class home(Program):
         try:
             while True: #event treatment
                 event = self.input.popleft()
-                self.sleep_counter = 0
                 if isinstance(event, Events.GestureEvent):
                     if self.mode != 1 and event.gesture == 2:
                         Single.Kernel.switchProgram(self.id)
@@ -134,13 +130,10 @@ class home(Program):
                     for elem in self.mode2_context:
                         elem.event(event)
         except IndexError:
-            if time.ticks_diff(time.ticks_add(self.lastSleepCounterIncrease, 100), time.ticks_ms()) <= 0:
-                self.sleep_counter += 1
-                self.lastSleepCounterIncrease = time.ticks_ms()
+            pass
 
-        if self.sleep_counter > self.cycle_sleep:
+        if time.ticks_diff(time.ticks_add(Single.Kernel.last_event_time, home.sleep_timeout), time.ticks_ms()) <=0 :
             Single.Hardware.lightsleep(1000, False, self.sleep_callback)
-            self.sleep_counter = 0
         if time.ticks_diff(time.ticks_add(self.lastGraphUpdate, 100), time.ticks_ms()) <= 0: # ever 100 ms update graph and battery stuffs (we dont care to do it precisely)
             self.percent = Single.Hardware.get_battery_gauge()
             self.mv = Single.Hardware.get_battery_voltage()
@@ -173,7 +166,6 @@ class home(Program):
         except IndexError:
             pass'''
         if machine.wake_reason() == machine.EXT0_WAKE or machine.wake_reason() == machine.EXT1_WAKE:
-            self.sleep_counter = 0
             return False
         return True
 
