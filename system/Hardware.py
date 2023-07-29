@@ -78,12 +78,12 @@ class Hardware:
             #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(45, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
             self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=16,)
         else:
-            cs = machine.Pin(5, machine.Pin.OUT)
+            cs = machine.Pin(5, machine.Pin.OUT, pull = machine.Pin.PULL_DOWN)
             dc = machine.Pin(27, machine.Pin.OUT)
             if self.WatchVersion != WATCHV2:
                 display_spi = machine.SPI(1,baudrate=80000000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,sck=machine.Pin(18),mosi=machine.Pin(19), miso=machine.Pin(23)) # will only work with modded MPY to add flag for dummy bit, otherwise use baudrate 27000000, ESP32 limit is 80Mhz
             else:
-                display_spi = machine.SPI(1,baudrate=40000000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,sck=machine.Pin(18),mosi=machine.Pin(19), miso=machine.Pin(23))
+                display_spi = machine.SPI(1,baudrate=80000000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,sck=machine.Pin(18),mosi=machine.Pin(19, pull= machine.Pin.PULL_UP), miso=machine.Pin(23, pull= machine.Pin.PULL_UP))
             #display_spi = machine.SPI(2,baudrate=80000000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,sck=machine.Pin(18),mosi=machine.Pin(19))
             #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, backlight=machine.Pin(12, machine.Pin.OUT), rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
             #self.display = st7789.ST7789(display_spi, Hardware.DISPLAY_WIDTH, Hardware.DISPLAY_HEIGHT, cs=cs, dc=dc, rotation=2, buffer_size=Hardware.DISPLAY_WIDTH*Hardware.DISPLAY_HEIGHT*2,)
@@ -864,8 +864,10 @@ class Hardware:
             a_pass = sObject_wifi.get(a_network)
             if a_pass != None:
                 self.wifi.connect(a_network, a_pass)
-                while self.wifi.status() == network.STAT_CONNECTING:
-                    time.sleep(0)
+                wifi_timeout = 0
+                while self.wifi.status() == network.STAT_CONNECTING and wifi_timeout < 10:
+                    time.sleep(1)
+                    wifi_timeout += 1
                 if self.wifi.status() == network.STAT_GOT_IP:
                     if self.WatchVersion < WATCHS3:
                         self.wifi.config(pm=self.wifi.PM_POWERSAVE)

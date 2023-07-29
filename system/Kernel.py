@@ -8,7 +8,8 @@ import Hardware
 import Settings
 import Events
 import Program
-import uasyncio
+import Bluetooth
+import uasyncio as asyncio
 import machine
 import Logger
 import oframebuf, framebuf
@@ -91,12 +92,13 @@ class Kernel:
         self.running_lock.acquire()
         try:
             gc.collect()
-            program = None
-            if self.program_cache.get(name) != None:
-                program = self.program_cache[name]
-            else:
-                program = __import__("programs." + name, globals(), locals(), [], 0)
-                self.program_cache[name] = program
+            program = __import__("programs." + name, globals(), locals(), [], 0)
+            #program = None
+            #if self.program_cache.get(name) != None:
+            #    program = self.program_cache[name]
+            #else:
+            #    program = __import__("programs." + name, globals(), locals(), [], 0)
+            #    self.program_cache[name] = program
             pinstance = getattr(program, name)(_thread.get_ident(), True, arg)
             if __debug__:
                 print("Free Ram after gc collect", free(True))
@@ -199,6 +201,7 @@ class Kernel:
         self.program_cache = {} # cache for alreayd loaded programs
         self.loading_animation = None
         self.last_event_time = time.ticks_ms()
+        self.bluetooth = Bluetooth.Bluetooth()
 
 
 
@@ -231,12 +234,14 @@ class Kernel:
             _thread.start_new_thread(self.blit_thread, ())
             self._lock.release()
             self.event(Events.RunEvent("home"))
+            #asyncio.run(self.bluetooth.connectBLE())
             while(not Single.fucky_wucky):
                 self._lock.acquire()
                 Logger.process()
                 self.process_events()
                 self.hardware.process()
                 self._lock.release()
+                #self.bluetooth.processBLE()
                 time.sleep(0)
 
         except Exception as e:
